@@ -97,8 +97,12 @@ class WiresManager:
         self.logger.debug(f"Added wire rule #{rule['priority']}: {rule_desc}")
     
     def generate_wires_def(self, file_path: str, module_name: str, 
-                          port_type: Optional[str] = None) -> str:
+                          port_type: Optional[str] = None,pattern: str = 'greedy') -> str:
         try:
+            if pattern not in ['lazy', 'greedy']:
+                raise ValueError(f"Invalid pattern: {pattern}. Must be 'lazy' or 'greedy'")
+            
+
             self.logger.debug(f"Generating wire definitions from {file_path} for module '{module_name}' (type: {port_type or 'all'})")
             ast = parse_verilog_file(file_path, macros=self.macros)
             if not ast:
@@ -108,16 +112,19 @@ class WiresManager:
             self.logger.debug(f"Found {len(ports)} ports to process")
 
             if self.current_rules:
-                self.logger.debug(f"Applying {len(self.current_rules)} wire rules")
+                self.logger.debug(f"Applying {len(self.current_rules)} wire rules in {pattern} mode")
             else:
-                self.logger.warning("No wire rules defined, using default wire generation")
+                if pattern == 'lazy':
+                    self.logger.warning("No wire rules defined and using lazy mode, no wires will be generated")
+                else:
+                    self.logger.warning("No wire rules defined, using default wire generation in greedy mode")
 
             wire_declarations = []
             generated_count = 0
             skipped_count = 0
 
             for port in ports:
-                wire_decl = self._generate_single_wire(port)
+                wire_decl = self._generate_single_wire(port, pattern)
                 if wire_decl and wire_decl.strip():
                     wire_declarations.append(wire_decl)
                     generated_count += 1
@@ -158,34 +165,61 @@ class WiresManager:
             self.logger.error(f"Invalid port type: {port_type}")
             raise ValueError(f"Unsupport port type: {port_type}")
     
-    def _generate_single_wire(self, port: PortInfo) -> str:
+    def _generate_single_wire(self, port: PortInfo, pattern: str = 'greedy') -> str:
         port_name = port.name
 
-        wire_name, width, expression = self._apply_wire_rules(port_name, port)
+        wire_name, width, expression, rule_matched = self._apply_wire_rules(port_name, port)
 
-        if not wire_name or not wire_name.strip():
-            self.logger.debug(f"Port '{port_name}' -> empty wire name, skipping")
+        if pattern == 'lazy' and not rule_matched:
+            self.logger.debug(f"Port '{port_name}' -> no rule matched in lazy mode, skipping")
             return ""
 
+        if not wire_name or not wire_name.strip():
+            if rule_matched:
+                self.logger.debug(f"Port '{port_name}' -> rule matched but returned empty wire name, respecting rule intent")
+                return ""
+            elif pattern == 'greedy':
+                wire_name = port_name
+                self.logger.debug(f"Port '{port_name}' -> no rule matched, using default wire name in greedy mode")
+            else:
+                self.logger.debug(f"Port '{port_name}' -> no rule matched in lazy mode, skipping")
+                return ""
+
         wire_decl = "wire"
-
-        if width:
-            formatted_width = self._format_wire_width(width)
-            if formatted_width:
-                wire_decl += f" {formatted_width}"
-        elif hasattr(port, 'width') and port.width and port.width != '1':
-            formatted_width = self._format_wire_width(port.width)
-            if formatted_width:
-                wire_decl += f" {formatted_width}"
-
-        wire_decl += f" {wire_name}"
-
-        if expression:
-            wire_decl += f" = {expression};"
-        else:
-            wire_decl += ";"
+        wire_decl = self._format_wire_declaration(wire_name, width, expression, port)
 
         return wire_decl
+    
+    def _format_wire_declaration(self, wire_name: str, width: Optional[str], 
+                           expression: Optional[str], port: PortInfo) -> str:
+        BASE_SPACING = 15
+
+        width_str = ""
+        if width:
+            width_str = self._format_wire_width(width)
+        elif hasattr(port, 'width') and port.width and port.width != '1':
+            width_str = self._format_wire_width(port.width)
+
+        if width_str:
+            prefix = f"wire {width_str}"
+            prefix_length = len(prefix)
+
+            if prefix_length >= BASE_SPACING:
+                spacing = " "
+            else:
+                needed_spaces = BASE_SPACING - prefix_length
+                spacing = " " * needed_spaces
+        else:
+            prefix = "wire"
+            spacing = " " * BASE_SPACING
+
+        if expression:
+            wire_decl = f"{prefix}{spacing}{wire_name} = {expression};"
+        else:
+            wire_decl = f"{prefix}{spacing}{wire_name};"
+
+        return wire_decl
+
 
     def _format_wire_width(self, width_input) -> str:
         if not width_input:
@@ -218,14 +252,16 @@ class WiresManager:
             else:
                 return f"[{width_str}-1:0]"
     
-    def _apply_wire_rules(self, port_name: str, port: PortInfo) -> Tuple[str, Optional[str], Optional[str]]:
+    def _apply_wire_rules(self, port_name: str, port: PortInfo) -> Tuple[str, Optional[str], Optional[str], bool]:
         wire_name = port_name
         width = None
         expression = None
         applied_rule = None
+        rule_matched = False
 
         for rule in reversed(self.current_rules):
             if self._match_pattern(port_name, rule['port_pattern']):
+                rule_matched = True
                 pattern_result = rule['wire_pattern']
 
                 if not pattern_result or not str(pattern_result).strip():
@@ -247,7 +283,7 @@ class WiresManager:
         else:
             self.logger.debug(f"No rules matched port '{port_name}', using default wire name")
             
-        return wire_name, width, expression
+        return wire_name, width, expression, rule_matched
     
     def _match_pattern(self, signal_name: str, pattern: str) -> bool:
         if '*' in pattern:
@@ -397,18 +433,18 @@ class VCGExecutionEngine:
         return custom_print
     
     def _create_wires_def_func(self):
-        def WiresDef(file_path: str, module_name: str, port_type: Optional[str] = None):
-            self.logger.info(f"Generating wire definitions for module '{module_name}' from {file_path}")
+        def WiresDef(file_path: str, module_name: str, port_type: Optional[str] = None, pattern: str = 'greedy'):
+            self.logger.info(f"Generating wire definitions for module '{module_name}' from {file_path} (pattern: {pattern})")
             wire_code = self.wires_manager.generate_wires_def(
-                file_path, module_name, port_type
+                file_path, module_name, port_type, pattern
             )
 
             if wire_code.strip():
                 self.output_manager.add_wires_output(wire_code)
                 wire_count = len([line for line in wire_code.split('\n') if line.strip()])
-                self.logger.info(f"WiresDef generated {wire_count} wire declarations")
+                self.logger.info(f"WiresDef generated {wire_count} wire declarations ({pattern} mode)")
             else:
-                self.logger.warning(f"WiresDef generated no wire declarations for {module_name}")
+                self.logger.warning(f"WiresDef generated no wire declarations for {module_name} ({pattern} mode)")
 
         return WiresDef
     
