@@ -177,9 +177,9 @@ class VCGRuleManager:
     def _apply_pattern_substitution(self, input_name: str, source_pattern: str, target_pattern: str) -> str:
         if '*' not in source_pattern:
             return target_pattern
-            
-        regex_pattern = source_pattern.replace('*', '(.*)')
-        match = re.match(f'^{regex_pattern}$', input_name)
+
+        escaped_pattern = re.escape(source_pattern).replace('\\*', '(.*)')
+        match = re.match(f'^{escaped_pattern}$', input_name)
         
         if not match:
             return target_pattern
@@ -217,11 +217,21 @@ class VCGRuleManager:
         return result
     
     def _match_pattern(self, signal_name: str, pattern: str) -> bool:
+        """修复后的模式匹配方法 - 正确处理特殊字符"""
         if '*' in pattern:
-            regex_pattern = pattern.replace('*', '(.*)')
-            return bool(re.match(f'^{regex_pattern}$', signal_name))
+            # 先转义所有正则表达式特殊字符，然后将\*替换为通配符组
+            escaped_pattern = re.escape(pattern).replace('\\*', '(.*)')
+            return bool(re.match(f'^{escaped_pattern}$', signal_name))
         else:
             return signal_name == pattern
+
+
+    #def _match_pattern(self, signal_name: str, pattern: str) -> bool:
+    #    if '*' in pattern:
+    #        regex_pattern = pattern.replace('*', '(.*)')
+    #        return bool(re.match(f'^{regex_pattern}$', signal_name))
+    #    else:
+    #        return signal_name == pattern
     
     def _match_param_pattern(self, param_name: str, pattern: str) -> bool:
         return self._match_pattern(param_name, pattern)
