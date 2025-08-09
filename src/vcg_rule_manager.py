@@ -96,33 +96,31 @@ class VCGRuleManager:
         }
         self.logger.debug(f"Reset all rules (cleared {total_rules} rules)")
     
+
     def resolve_signal_connection(self, port: PortInfo) -> str:
         signal_name = port.name
         rules = self.rules['signal_rules']
-        
+
         for rule_index, rule in enumerate(reversed(rules)):
             if rule['port_type'] is not None:
                 if not self._check_port_type_match(port, rule['port_type']):
                     continue
-            
+                
             if self._match_pattern(signal_name, rule['source']):
-                target_result = self._apply_pattern_substitution(signal_name, rule)
-                if 'comments' in rule and rule['comments']:
-                    target_result = self._restore_inline_comments(target_result, rule['comments'])
-                
-                if target_result.replace('/*', '').replace('*/', '').strip() in ['0', '1']:
-                    clean_result = re.sub(r'/\*[^*]*(?:\*(?!/)[^*]*)*\*/', '', target_result).strip()
-                    if clean_result in ['0', '1']:
-                        literal_result = self._generate_width_literal(port, clean_result)
-                        comment_match = re.search(r'/\*[^*]*(?:\*(?!/)[^*]*)*\*/', target_result)
-                        if comment_match:
-                            return literal_result + comment_match.group(0)
-                        return literal_result
-                
-                self.logger.debug(f"Applied signal rule #{len(rules)-1-rule_index} to '{signal_name}' -> '{target_result}'")
-                return target_result
-        
+                pattern_result = self._apply_pattern_substitution(
+                    signal_name, rule['source'], rule['target']
+                )
+
+                final_result = self._handle_literal_value_if_needed(pattern_result, port)
+
+                if rule.get('comments'):
+                    final_result = self._restore_inline_comments(final_result, rule['comments'])
+
+                self.logger.debug(f"Applied signal rule #{len(rules)-1-rule_index} to '{signal_name}' -> '{final_result}'")
+                return final_result
+
         return signal_name
+
     
     def resolve_param_connection(self, param_name: str) -> Optional[str]:
         rules = self.rules['param_rules']
@@ -136,23 +134,68 @@ class VCGRuleManager:
     def resolve_wire_generation(self, port: PortInfo, pattern: str = 'greedy') -> Tuple[str, Optional[str], Optional[str], bool]:
         port_name = port.name
         rules = self.rules['wire_rules']
-        
+
         for rule_index, rule in enumerate(reversed(rules)):
             if self._match_pattern(port_name, rule['port_pattern']):
-                wire_name = self._apply_pattern_substitution_for_wire(port_name, rule)
-                
-                if 'comments' in rule and rule['comments']:
-                    wire_name = self._restore_inline_comments(wire_name, rule['comments'])
+                self.logger.debug(f"Wire rule #{len(rules)-1-rule_index} matched for port '{port_name}'")
+
+                pattern_result = self._apply_pattern_substitution(port_name, rule['port_pattern'], rule['wire_pattern'])
+                self.logger.debug(f"Wire pattern '{rule['wire_pattern']}' → '{pattern_result}'")
+
+                final_result = self._handle_literal_value_if_needed(pattern_result, port)
+
+                if rule.get('comments'):
+                    final_result = self._restore_inline_comments(final_result, rule['comments'])
                 
                 width = rule.get('width')
+
                 expression = rule.get('expression')
+
+                if expression:
+                    original_expression = expression
+                    expression = self._apply_pattern_substitution(port_name, rule['port_pattern'], expression)
+                    self.logger.debug(f"Expression pattern '{original_expression}' → '{expression}'")
                 
-                return wire_name, width, expression, True
+                self.logger.info(f"Generated wire: name='{final_result}', width='{width}', expression='{expression}'")
+                return final_result, width, expression, True
         
         if pattern == 'lazy':
+            self.logger.debug(f"No wire rule matched for '{port_name}' in lazy mode")
             return "", None, None, False
         else:  # greedy
+            self.logger.debug(f"No wire rule matched for '{port_name}', using port name as wire name")
             return port_name, None, None, False
+        
+
+    def _handle_literal_value_if_needed(self, value: str, port: PortInfo) -> str:
+        if value.strip() in ['0', '1']:
+            return self._generate_width_literal(port, value.strip())
+        
+        return value
+    
+
+    def _apply_pattern_substitution(self, input_name: str, source_pattern: str, target_pattern: str) -> str:
+        if '*' not in source_pattern:
+            return target_pattern
+            
+        regex_pattern = source_pattern.replace('*', '(.*)')
+        match = re.match(f'^{regex_pattern}$', input_name)
+        
+        if not match:
+            return target_pattern
+            
+        result = target_pattern
+        groups = match.groups()
+        
+        function_pattern = r'\$\{([^}]+)\}'
+        result = re.sub(function_pattern, 
+                       lambda m: self._execute_function_call(m.group(1), groups), 
+                       result)
+        
+        for group in groups:
+            result = result.replace('*', group, 1)
+        
+        return result
     
     def _extract_inline_comments(self, target_pattern: str) -> Tuple[str, List[str]]:
         comments = []
@@ -182,35 +225,6 @@ class VCGRuleManager:
     
     def _match_param_pattern(self, param_name: str, pattern: str) -> bool:
         return self._match_pattern(param_name, pattern)
-    
-    def _apply_pattern_substitution(self, signal_name: str, rule: Dict) -> str:
-        return self._apply_pattern_substitution_core(signal_name, rule['source'], rule['target'])
-    
-    def _apply_pattern_substitution_for_wire(self, port_name: str, rule: Dict) -> str:
-        return self._apply_pattern_substitution_core(port_name, rule['port_pattern'], rule['wire_pattern'])
-    
-    def _apply_pattern_substitution_core(self, signal_name: str, source_pattern: str, target_pattern: str) -> str:
-        if '*' in source_pattern:
-            regex_pattern = source_pattern.replace('*', '(.*)')
-            match = re.match(f'^{regex_pattern}$', signal_name)
-            if match:
-                result = target_pattern
-                groups = match.groups()
-                
-                function_pattern = r'\$\{([^}]+)\}'
-                
-                def replace_function_call(match_obj):
-                    function_call = match_obj.group(1)
-                    return self._execute_function_call(function_call, groups)
-                
-                result = re.sub(function_pattern, replace_function_call, result)
-                
-                for group in groups:
-                    result = result.replace('*', group, 1)
-                
-                return result
-        
-        return target_pattern
     
     def _execute_function_call(self, function_call: str, groups: tuple) -> str:
         try:

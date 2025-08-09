@@ -61,7 +61,7 @@ class VCGExecutionEngine:
         self.rule_manager = VCGRuleManager()
         self.output_manager = OrderedOutputManager()
         self.wires_manager = WiresManager(self.rule_manager, macros=macros)
-        self.instance_manager = InstanceManager(self.rule_manager, macros=macros)  # 新增self.macros = macros
+        self.instance_manager = InstanceManager(self.rule_manager, macros=macros)
         self.logger = get_vcg_logger('ExecutionEngine')
     def execute(self, python_code: str) -> str:
         try:
