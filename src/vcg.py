@@ -87,7 +87,7 @@ def main():
 
         macros = parse_macros_argument(args.macros) if args.macros else None
         
-        processor = VCGFileProcessor(macros=macros, debug=args.debug)
+        processor = VCGFileProcessor(macros=macros)
         processor.process_file(file_path)
         logger.info("VCG generation completed successfully")
         

@@ -42,22 +42,19 @@ class VCGFileProcessor:
     VCG_GEN_BEGIN = '//VCG_GEN_BEGIN'
     VCG_GEN_END = '//VCG_GEN_END'
     
-    def __init__(self, macros = None, debug: bool = False):
-        self.debug = debug
+    def __init__(self, macros = None):
         self.macros = macros 
         self.logger = get_vcg_logger('FileProcessor')
 
     def process_file(self, file_path: Path) -> None:
         try:
             set_file_context(file_path)
-
             self.logger.info(f"Starting to process file: {file_path.name}")
 
             content = file_path.read_text(encoding='utf-8')
-
             self.logger.debug(f"File loaded - Size: {len(content)} chars, Lines: {len(content.splitlines())}")
             
-            vcg_blocks = self._extract_vcg_blocks_with_position(content)
+            vcg_blocks = self._extract_vcg_blocks(content)
             
             if not vcg_blocks:
                 self.logger.info("No VCG blocks found - skipping file")
@@ -67,6 +64,7 @@ class VCGFileProcessor:
             
             for vcg_block in vcg_blocks:
                 self.logger.debug(f"Processing VCG block {vcg_block.block_id} (lines {vcg_block.start_line+1}-{vcg_block.end_line+1})")
+
                 execution_engine = VCGExecutionEngine(macros=self.macros)
                 python_code = self._preprocess_vcg_code(vcg_block.code)
 
@@ -77,8 +75,7 @@ class VCGFileProcessor:
                 output = execution_engine.execute(python_code)
                 vcg_block.generated_content = output
                 
-                if self.debug:
-                    print(f"VCG Block {vcg_block.block_id} Exec Done")
+                self.logger.info(f"VCG Block {vcg_block.block_id} Exec Done")
             
             self.logger.debug("Injecting generated content back to file")
             
@@ -98,7 +95,7 @@ class VCGFileProcessor:
         finally:
             clear_file_context()
     
-    def _extract_vcg_blocks_with_position(self, content: str) -> List[VCGBlock]:
+    def _extract_vcg_blocks(self, content: str) -> List[VCGBlock]:
         blocks = []
         lines = content.split('\n')
         
@@ -225,7 +222,7 @@ class VCGFileProcessor:
         return '\n'.join(result_lines)
     
 def test():
-    process = VCGFileProcessor(debug=True)
+    process = VCGFileProcessor()
     file_path = Path("uart.v")
     process.process_file(file_path=file_path)
 
