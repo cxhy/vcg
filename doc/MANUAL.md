@@ -32,7 +32,7 @@ pip install ply
 
 ### 基本语法
 ```bash
-python vcg_main.py <verilog_file> [options]
+python vcg.py <verilog_file> [options]
 ```
 
 ### 参数说明
@@ -58,16 +58,16 @@ python vcg_main.py <verilog_file> [options]
 ### 使用示例
 ```bash
 # 基本使用
-python vcg_main.py uart.v
+python vcg.py uart.v
 
 # 调试模式
-python vcg_main.py uart.v --debug
+python vcg.py uart.v --debug
 
 # 指定宏定义
-python vcg_main.py uart.v --macros "WIDTH=8,DEPTH=16"
+python vcg.py uart.v --macros "WIDTH=8,DEPTH=16"
 
 # 详细日志并输出到文件
-python vcg_main.py uart.v --log-level DEBUG --log-file vcg.log
+python vcg.py uart.v --log-level DEBUG --log-file vcg.log
 ```
 
 ## VCG语法和功能说明
@@ -477,7 +477,7 @@ endmodule
 
 1. **使用调试模式**：
    ```bash
-   python vcg_main.py file.v --debug --log-level DEBUG
+   python vcg.py file.v --debug --log-level DEBUG
    ```
 
 2. **分步验证规则**：
