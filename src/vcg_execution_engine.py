@@ -99,6 +99,9 @@ class VCGExecutionEngine:
             )
             if instance_code.strip():
                 self.output_manager.add_instance_output(instance_code)
+            
+            self.rule_manager.reset()
+            self.logger.debug(f"Auto-reset rules after Instance '{instance_name}' generation completed")
         return Instance
     
     def _create_wires_def_func(self):
@@ -108,6 +111,8 @@ class VCGExecutionEngine:
             )
             if wire_code.strip():
                 self.output_manager.add_wires_output(wire_code)
+            self.rule_manager.reset()
+            self.logger.debug(f"Auto-reset rules after WiresDef for module '{module_name}' generation completed")
         
         return WiresDef
     
