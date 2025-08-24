@@ -52,7 +52,7 @@ endmodule
 2. **运行VCG处理：**
 
 ```bash
-python vcg_main.py uart_top.v
+python vcg.py uart_top.v
 ```
 
 3. **查看生成的结果：**
@@ -106,7 +106,7 @@ ConnectParam("FIFO_*_DEPTH", "1024")
 
 ## 📖 完整文档
 
-- 📋 **[详细使用手册](MANUAL.md)** - 完整的功能说明和最佳实践
+- 📋 **[详细使用手册](doc/MANUAL.md)** - 完整的功能说明和最佳实践
 - 💡 **[示例集合](examples/)** - 丰富的实际应用案例
 
 ## 🎯 适用场景
@@ -121,16 +121,16 @@ ConnectParam("FIFO_*_DEPTH", "1024")
 
 ```bash
 # 基本使用
-python vcg_main.py design.v
+python vcg.py design.v
 
 # 调试模式 + 详细日志
-python vcg_main.py design.v --debug --log-level DEBUG
+python vcg.py design.v --debug --log-level DEBUG
 
 # 指定宏定义
-python vcg_main.py design.v --macros "WIDTH=32,DEPTH=1024"
+python vcg.py design.v --macros "WIDTH=32,DEPTH=1024"
 
 # 输出日志到文件
-python vcg_main.py design.v --log-file vcg.log
+python vcg.py design.v --log-file vcg.log
 ```
 
 ## 🏗️ 系统要求
