@@ -97,13 +97,25 @@ class VerilogParser:
         if p[3]:
             for param in p[3]:
                 self.ast_builder.add_parameter(module, param)
+
+        complete_ports = self.ast_builder.get_module_ports(p[2])
+
+        port_errors = self.ast_builder.validate_module_ports(p[2])
+        if port_errors:
+            for error in port_errors:
+                print(f"Warning Ports decl: {error}")
         
-        if p[4]:
-            for port in p[4]:
-                self.ast_builder.add_port(module, port)
-        
-        self.ast_builder.set_body_ignored(module)
-        
+        for port_info in complete_ports:
+            if port_info._is_fully_defined():
+                port_decl = PortDeclaration(
+                    identifier=port_info.name,
+                    direction=port_info.direction,
+                    net_type=port_info.net_type,
+                    range_expr=port_info.range_expr
+                )
+                self.ast_builder.add_port(module, port_decl)
+
+        self.ast_builder.pop_module_context()
         p[0] = module
     
     def p_module_declaration_error(self, p):
@@ -111,10 +123,12 @@ class VerilogParser:
         self._syntax_error(p, "Invalid module declaration")
         module = self.ast_builder.create_module_declaration(p[2])
         self.ast_builder.set_body_ignored(module)
+        self.ast_builder.pop_module_context()
         p[0] = module
     
     def p_module_name(self, p):
         """module_name : ID"""
+        self.ast_builder.push_module_context(p[1])
         p[0] = p[1]
     
     def p_opt_parameter_list(self, p):
@@ -207,30 +221,30 @@ class VerilogParser:
     
     def p_port_declaration(self, p):
         """port_declaration : opt_port_direction opt_net_or_reg_type opt_packed_dimension port_identifier"""
-        direction = p[1] or "input"
-        net_type = p[2] or "wire" 
+        direction = p[1] 
+        net_type = p[2] 
         range_info = p[3]  
         identifier = p[4]
         
-        if identifier is not None:
-            if range_info:
-                msb_expr, lsb_expr = range_info
-                port = self.ast_builder.create_port(
-                    identifier=identifier,
-                    direction=direction,
-                    net_type=net_type,
-                    msb_expr=msb_expr,
-                    lsb_expr=lsb_expr
-                )
-            else:
-                port = self.ast_builder.create_port(
-                    identifier=identifier,
-                    direction=direction,
-                    net_type=net_type
-                )
-            p[0] = port
-        else:
-            p[0] = None
+        if identifier and self.ast_builder.current_parsing_module:
+            msb_expr = range_info[0] if range_info else None
+            lsb_expr = range_info[1] if range_info else None
+
+            self.ast_builder.register_port_from_list(
+                self.ast_builder.current_parsing_module,
+                identifier,
+                direction,
+                net_type or "wire",  
+                msb_expr,
+                lsb_expr
+            )
+        p[0] = {
+            'name': identifier,
+            'direction': direction,
+            'net_type': net_type,
+            'msb_expr': range_info[0] if range_info else None,
+            'lsb_expr': range_info[1] if range_info else None
+        }
     
     def p_port_declaration_error(self, p):
         """port_declaration : error"""
@@ -280,31 +294,103 @@ class VerilogParser:
         """module_item_list : empty"""
         p[0] = None
     
-    def p_module_item_list_ignore(self, p):
-        """module_item_list : module_item_list module_item
-                            | module_item"""
-        p[0] = None
-    
     def p_module_item_list_error(self, p):
         """module_item_list : module_item_list error SEMICOLON"""
         p[0] = None
     
-    def p_module_item_ignore(self, p):
+    def p_module_item_list_single(self, p):
+        """module_item_list : module_item"""
+        if p[1] is not None:
+            p[0] = [p[1]]
+        else:
+            p[0] = []
+            
+    def p_module_item_list_multiple(self, p):
+        """module_item_list : module_item_list module_item"""
+        items = p[1] or []
+        if p[2] is not None:
+            items.append(p[2])
+        p[0] = items
+
+
+    def p_module_item(self, p):
         """module_item : module_item_declaration
                        | module_item_assignment
                        | module_item_always
                        | module_item_instance"""
-        p[0] = None
-    
+        p[0] = p[1]
+
     def p_module_item_declaration(self, p):
         """module_item_declaration : INPUT opt_net_or_reg_type opt_packed_dimension port_identifier SEMICOLON
                                    | OUTPUT opt_net_or_reg_type opt_packed_dimension port_identifier SEMICOLON
                                    | INOUT opt_net_or_reg_type opt_packed_dimension port_identifier SEMICOLON
                                    | WIRE opt_packed_dimension port_identifier SEMICOLON
                                    | REG opt_packed_dimension port_identifier SEMICOLON
-                                   | LOGIC opt_packed_dimension port_identifier SEMICOLON"""
+                                   | LOGIC opt_packed_dimension port_identifier SEMICOLON
+                                   | PARAMETER module_parameter_assignment_list SEMICOLON
+                                   | LOCALPARAM module_parameter_assignment_list SEMICOLON"""
+
+        if p[1] in ['input', 'output', 'inout']:
+            direction = p[1].lower()
+            net_type = p[2] or "wire"
+            range_info = p[3]
+            identifier = p[4]
+
+            if identifier and self.ast_builder.current_parsing_module:
+                msb_expr = range_info[0] if range_info else None
+                lsb_expr = range_info[1] if range_info else None
+
+                self.ast_builder.register_port_from_body(
+                    self.ast_builder.current_parsing_module,
+                    identifier,
+                    direction,
+                    net_type,
+                    msb_expr,
+                    lsb_expr
+                )
+
+        elif p[1] in ['wire', 'reg', 'logic']:
+            pass
+        
+        elif p[1] in ['parameter', 'localparam']:
+            param_type = p[1].lower()
+            param_list = p[2] or []
+
+            for param_info in param_list:
+                param = self.ast_builder.create_parameter(
+                    identifier=param_info['identifier'],
+                    parameter_type=param_type,
+                    default_value=str(param_info['default_value']) if param_info['default_value'] else ""
+                )
+                self.ast_builder.add_parameter_to_current_or_pending(param)
+
         p[0] = None
     
+    def p_module_parameter_assignment_list(self, p):
+        """module_parameter_assignment_list : param_assignment"""
+        if p[1] is not None:
+            identifier, default_value = p[1]
+            param_info = {
+                'identifier': identifier,
+                'default_value': default_value
+            }
+            p[0] = [param_info]
+        else:
+            p[0] = []
+    
+    def p_module_parameter_assignment_list_multiple(self, p):
+        """module_parameter_assignment_list : module_parameter_assignment_list COMMA param_assignment"""
+        param_list = p[1] or []
+        if p[3] is not None:
+            identifier, default_value = p[3]
+            param_info = {
+                'identifier': identifier,
+                'default_value': default_value
+            }
+            param_list.append(param_info)
+        p[0] = param_list
+
+
     def p_module_item_assignment(self, p):
         """module_item_assignment : ASSIGN expression EQUALS expression SEMICOLON"""
         p[0] = None
@@ -639,20 +725,32 @@ def test_parser():
                 print(f"    Width Expression: {port.range_expr.width_expr}")
 
 
+
 if __name__ == "__main__":
     test_code = """
     module test_module #(
-        parameter HIF_DW_CLOG2 = $clog2(HIF_DW)
-    ) (
-        input [$clog2(MAX_HIF_XFRSZ_CLOG2):0] hif_burst_size,
-        input [WIDTH-1:0] hif_burst_size
+        parameter A=1,
+        parameter C=3) (
+hif_burst_size,hif_burst_size2
     );
+    //parameter B = 7;
+    parameter B1 = 7, B2=4;
+            input [DATA_WDITH+7:0] hif_burst_size;
+        input  hif_burst_size2;
     endmodule
     """
 
-    parser = VerilogParser(debug=True)
+    #parser = VerilogParser(debug=True)
+    parser = VerilogParser(debug=False)
+    
     result = parser.parse(test_code)
+    print(result.get_module_name())
+    print(result.get_module_parameters())
     print(result.get_module_ports())
+    ports = result.get_module_ports()
+    for port in ports:
+        print(f"port name : {port.name}")
+        print(f"port width : {port.width}")
     #test_parser()
     #test_code = """
     #ast = parse_verilog_file("axi_slave.v")

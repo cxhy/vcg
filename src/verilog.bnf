@@ -1,0 +1,302 @@
+design_unit ::= module_declaration| empty
+
+module_declaration ::= MODULE module_name opt_parameter_list opt_port_list SEMICOLON module_item_list ENDMODULE
+                     | MODULE module_name error ENDMODULE
+
+module_name ::= ID
+
+
+<opt_parameter_list> ::= HASH LPAREN <parameter_declaration_list> RPAREN
+                       | HASH LPAREN error RPAREN
+                       | <empty>
+
+<opt_parameter_list> ::= HASH LPAREN <parameter_declaration_list> RPAREN
+                       | HASH LPAREN error RPAREN
+                       | <empty>
+
+<parameter_declaration_list> ::= <parameter_declaration>
+                               | <parameter_declaration_list> COMMA <parameter_declaration>
+
+<parameter_declaration> ::= PARAMETER <param_assignment>
+                          | LOCALPARAM <param_assignment>
+                          | PARAMETER error
+                          | LOCALPARAM error
+
+<param_assignment> ::= ID EQUALS <expression>
+                     | ID EQUALS error
+
+<opt_port_list> ::= LPAREN <port_list> RPAREN
+                  | LPAREN RPAREN
+                  | LPAREN error RPAREN
+                  | <empty>
+
+<port_list> ::= <port_declaration>
+              | <port_list> COMMA <port_declaration>
+
+<port_declaration> ::= <opt_port_direction> <opt_net_or_reg_type> <opt_packed_dimension> <port_identifier>
+                     | error
+
+<opt_port_direction> ::= INPUT
+                       | OUTPUT
+                       | INOUT
+                       |<empty>
+
+<opt_net_or_reg_type> ::= WIRE
+                        | REG
+                        | LOGIC
+                        | <empty>
+
+<opt_packed_dimension> ::= LBRACKET <expression> COLON <expression> RBRACKET
+                | LBRACKET error RBRACKET
+                         | <empty>
+
+<port_identifier> ::= ID
+
+<module_item_list> ::= <empty>
+                     | <module_item_list> <module_item>
+                     | <module_item>     
+                     | <module_item_list> error SEMICOLON
+
+<module_item> ::= <module_item_declaration>
+                | <module_item_assignment>
+                | <module_item_always>
+                | <module_item_instance>
+
+<module_item_declaration> ::= INPUT <opt_net_or_reg_type> <opt_packed_dimension> <port_identifier> SEMICOLON
+                            | OUTPUT <opt_net_or_reg_type> <opt_packed_dimension> <port_identifier> SEMICOLON
+                            | INOUT <opt_net_or_reg_type> <opt_packed_dimension> <port_identifier> SEMICOLON
+                            | WIRE <opt_packed_dimension> <port_identifier> SEMICOLON
+                            | REG <opt_packed_dimension> <port_identifier> SEMICOLON
+                            | LOGIC <opt_packed_dimension> <port_identifier> SEMICOLON
+                            | PARAMETER <module_parameter_assignment_list> SEMICOLON
+                            | LOCALPARAM <module_parameter_assignment_list> SEMICOLON
+
+<module_parameter_assignment_list> ::= <param_assignment>
+                                     | <module_parameter_assignment_list> COMMA <param_assignment>
+
+
+<module_item_assignment> ::= ASSIGN <expression> EQUALS <expression> SEMICOLON
+
+<module_item_always> ::= ALWAYS <expression> BEGIN <expression_list> END
+
+<module_item_instance> ::= ID ID LPAREN <expression_list> RPAREN SEMICOLON
+
+
+<expression> ::= <primary>| PLUS <expression>
+               | MINUS <expression>
+               | NOT <expression>
+               | LNOT <expression>
+               | <expression> PLUS <expression>
+               | <expression> MINUS <expression>
+               | <expression> TIMES <expression>
+               | <expression> DIVIDE <expression>
+               | <expression> MOD <expression>
+               | <expression> POWER <expression>
+               | <expression> LT <expression>
+               | <expression> GT <expression>
+               | <expression> LE <expression>
+               | <expression> GE <expression>
+               | <expression> EQ <expression>
+               | <expression> NE <expression>
+               | <expression> LAND <expression>
+               | <expression> LOR <expression>
+               | <expression> AND <expression>
+               | <expression> OR <expression>
+               | <expression> XOR <expression>
+               | <expression> XNOR <expression>
+               | <expression> LSHIFT <expression>
+               | <expression> RSHIFT <expression>
+               | <expression> COND <expression> COLON <expression>
+               | LPAREN <expression> RPAREN
+               |<concatenation>
+
+<primary> ::= INTNUMBER_DEC
+            | INTNUMBER_HEX
+            | INTNUMBER_OCT
+            | INTNUMBER_BIN
+            | ID
+            | STRING_LITERAL
+            | ID LBRACKET <expression> RBRACKET
+            | ID LBRACKET error RBRACKET
+            | ID LBRACKET <expression> COLON <expression> RBRACKET
+            | ID LBRACKET error COLON error RBRACKET
+            | PLUS INTNUMBER_DEC
+            | PLUS INTNUMBER_HEX
+            | PLUS INTNUMBER_OCT
+            | PLUS INTNUMBER_BIN
+            | MINUS INTNUMBER_DEC
+            | MINUS INTNUMBER_HEX
+            | MINUS INTNUMBER_OCT
+            | MINUS INTNUMBER_BIN
+            | ID LPAREN <expression_list> RPAREN
+
+<concatenation> ::= LBRACE <expression_list> RBRACE
+                  | LBRACE error RBRACE
+
+<expression_list> ::= <expression>| <expression_list> COMMA <expression>
+
+<empty> ::= ε
+
+操作符优先级（从低到高）
+条件操作符: COND, COLON (右结合)
+逻辑或: LOR (左结合)
+逻辑与: LAND (左结合)
+按位或: OR (左结合)
+按位异或: XOR, XNOR (左结合)
+按位与: AND (左结合)
+相等比较: EQ, NE (左结合)
+关系比较: LT, GT, LE, GE (左结合)
+移位: LSHIFT, RSHIFT (左结合)
+加减: PLUS, MINUS (左结合)
+乘除模: TIMES, DIVIDE, MOD (左结合)
+幂运算: POWER (右结合)
+一元操作: UMINUS, UPLUS, UNOT (右结合)
+
+
+
+
+
+
+
+
+
+<design_unit> ::= <module_declaration>
+                | <empty>
+
+<module_declaration> ::= MODULE <module_name> <opt_parameter_list> <opt_port_list> SEMICOLON <module_item_list> ENDMODULE
+                       | MODULE <module_name> error ENDMODULE
+
+<module_name> ::= ID
+
+<opt_parameter_list> ::= HASH LPAREN <parameter_declaration_list> RPAREN
+                       | HASH LPAREN error RPAREN
+                       | <empty>
+
+<parameter_declaration_list> ::= <parameter_declaration>
+                               | <parameter_declaration_list> COMMA <parameter_declaration>
+
+<parameter_declaration> ::= PARAMETER <param_assignment>
+                          | LOCALPARAM <param_assignment>
+                          | PARAMETER error
+                          | LOCALPARAM error
+
+<param_assignment> ::= ID EQUALS <expression>
+                     | ID EQUALS error
+
+
+<opt_port_list> ::= LPAREN <port_name_list> RPAREN    
+                  | LPAREN <port_list> RPAREN         
+                  | LPAREN RPAREN
+                  | <empty>
+
+<port_name_list> ::= ID| <port_name_list> COMMA ID
+
+<port_list> ::= <port_declaration>
+              | <port_list> COMMA <port_declaration>
+
+<port_declaration> ::= <opt_port_direction> <opt_net_or_reg_type> <opt_packed_dimension> <port_identifier>
+                     | error
+
+<opt_port_direction> ::= INPUT| OUTPUT
+                       | INOUT
+                       | <empty>
+
+<opt_net_or_reg_type> ::= WIRE
+                        | REG
+                        | LOGIC
+                        | <empty>
+
+<opt_packed_dimension> ::= LBRACKET <expression> COLON <expression> RBRACKET
+                | LBRACKET error RBRACKET
+                         | <empty>
+
+<port_identifier> ::= ID
+
+<module_item_list> ::= <empty>
+                     | <module_item_list> <module_item>
+                     | <module_item>
+                     | <module_item_list> error SEMICOLON
+
+<module_item> ::= <module_item_declaration>
+                | <module_item_assignment>
+                | <module_item_always>
+                | <module_item_instance>
+
+<module_item_declaration> ::= INPUT <opt_net_or_reg_type> <opt_packed_dimension> <port_identifier_list> SEMICOLON
+                            | OUTPUT <opt_net_or_reg_type> <opt_packed_dimension> <port_identifier_list> SEMICOLON
+                            | INOUT <opt_net_or_reg_type> <opt_packed_dimension> <port_identifier_list> SEMICOLON
+                            | PARAMETER <param_assignment_list> SEMICOLON
+                            | LOCALPARAM <param_assignment_list> SEMICOLON
+
+<port_identifier_list> ::= <port_identifier>
+                         | <port_identifier_list> COMMA <port_identifier>
+
+
+<param_assignment_list> ::= <param_assignment>
+                          | <param_assignment_list> COMMA <param_assignment>
+
+<module_item_assignment> ::= ASSIGN <expression> EQUALS <expression> SEMICOLON
+
+<module_item_always> ::= ALWAYS <expression> BEGIN <expression_list> END
+
+<module_item_instance> ::= ID ID LPAREN <expression_list> RPAREN SEMICOLON
+
+<expression> ::= <primary>
+               | <expression> <binary_operator> <expression>
+               | <unary_operator> <expression>
+               | <expression> COND <expression> COLON <expression>
+               | LPAREN <expression> RPAREN
+               | <concatenation>
+
+<binary_operator> ::= PLUS | MINUS | TIMES | DIVIDE | MOD | POWER
+                    | LT | GT | LE | GE | EQ | NE
+                    | LAND | LOR | AND | OR | XOR | XNOR
+                    | LSHIFT | RSHIFT
+
+<unary_operator> ::= PLUS | MINUS | NOT | LNOT
+
+<primary> ::= <number>
+            | <identifier>
+            | <string_literal>
+            | <bit_select>
+            | <part_select>
+            | <function_call>
+
+<number> ::= INTNUMBER_DEC
+           | INTNUMBER_HEX
+           | INTNUMBER_OCT
+           | INTNUMBER_BIN
+           | <signed_number>
+
+<signed_number> ::= PLUS <number>
+                  | MINUS <number>
+
+<identifier> ::= ID
+
+<string_literal> ::= STRING_LITERAL
+
+<bit_select> ::= ID LBRACKET <expression> RBRACKET
+               | ID LBRACKET error RBRACKET
+
+<part_select> ::= ID LBRACKET <expression> COLON <expression> RBRACKET
+                | ID LBRACKET error COLON error RBRACKET
+
+<function_call> ::= ID LPAREN <expression_list> RPAREN
+
+<concatenation> ::= LBRACE <expression_list> RBRACE
+                  | LBRACE error RBRACE
+
+<expression_list> ::= <expression>
+                    | <expression_list> COMMA <expression>
+
+<empty> ::= ε
+
+
+
+
+
+<!-- 扩展模块项声明以支持多端口声明 -->
+
+
+
+

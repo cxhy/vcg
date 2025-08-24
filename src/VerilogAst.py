@@ -83,7 +83,6 @@ class RangeExpression:
             return f"({self.msb_expr}-{self.lsb_expr}+1)"
     
     def _simplify_plus_one_expression(self, expr: str) -> Optional[str]:
-        import re
         
         expr = expr.strip()
         
@@ -122,11 +121,15 @@ class PortInfo:
     direction: str
     net_type: str  
     range_expr: Optional[RangeExpression] = None 
+    _declared_in_port_list: bool = field(default=False, init=False)
+    _declared_in_body: bool = field(default=False, init=False)
+    _is_complete: bool = field(default=False, init=False)
+    _pending_updates: Dict[str, Any] = field(default_factory=dict, init=False)
     
     @property
     def width(self) -> Optional[Union[int, str]]:
         if self.range_expr is None:
-            return None
+            return 1
         if self.range_expr.width_value is not None:
             return self.range_expr.width_value
         return self.range_expr.width_expr
@@ -179,6 +182,76 @@ class PortInfo:
             return "single bit"
         
         return f"[{self.range_expr.msb_expr}:{self.range_expr.lsb_expr}]"
+    
+    def _merge_from_body_declaration(self, direction: Optional[str] = None, net_type: Optional[str] = None,
+                                   range_expr: Optional[RangeExpression] = None) -> None:
+        updated = False
+        
+        if direction and (not self.direction or self.direction == ""):
+            self.direction = direction
+            updated = True
+        elif direction and self.direction and self.direction != direction:
+            if self._declared_in_port_list:
+                pass
+            else:
+                self.direction = direction
+                updated = True
+            
+        if net_type and (not self.net_type or self.net_type == "wire"):
+            self.net_type = net_type
+            updated = True
+        elif net_type and self.net_type != net_type:
+            if self._declared_in_port_list:
+                pass
+            else:
+                self.net_type = net_type
+                updated = True
+                
+        if range_expr and not self.range_expr:
+            self.range_expr = range_expr
+            updated = True
+        elif range_expr and self.range_expr:
+            if not self._declared_in_port_list:
+                self.range_expr = range_expr
+                updated = True
+        
+        if updated:
+            self._declared_in_body = True
+            self._update_completeness()
+    
+    def _merge_from_port_list(self, direction: Optional[str] = None,
+                            net_type: Optional[str] = None,
+                            range_expr: Optional[RangeExpression] = None) -> None:
+        if direction:
+            self.direction = direction
+        if net_type:
+            self.net_type = net_type
+        if range_expr:
+            self.range_expr = range_expr
+            
+        self._declared_in_port_list = True
+        self._update_completeness()
+
+    def _update_completeness(self) -> None:
+        self._is_complete = bool(
+            self.name and 
+            self.direction and 
+            self.direction != ""
+            #self.net_type is not None
+        )
+    
+    def _is_fully_defined(self) -> bool:
+        return self._is_complete
+    
+    def _get_definition_status(self) -> str:
+        if self._declared_in_port_list and self._declared_in_body:
+            return "both"
+        elif self._declared_in_port_list:
+            return "port_list_only"
+        elif self._declared_in_body:
+            return "body_only"
+        else:
+            return "undefined"
 
 @dataclass
 class ParameterInfo:
@@ -412,6 +485,77 @@ class ExpressionSimplifier:
             lsb_value=lsb_val
         )
 
+class PortRegistry:  
+    def __init__(self):
+        self._ports: Dict[str, PortInfo] = {}  
+        self._port_order: List[str] = [] 
+    
+    def register_from_port_list(self, port_name: str, direction: Optional[str] = None,
+                              net_type: Optional[str] = None, 
+                              range_expr: Optional[RangeExpression] = None) -> PortInfo:
+        if port_name not in self._ports:
+            port_info = PortInfo(
+                name=port_name,
+                direction=direction or "",
+                net_type=net_type or "wire",
+                range_expr=range_expr
+            )
+            self._ports[port_name] = port_info
+            self._port_order.append(port_name)
+        else:
+            port_info = self._ports[port_name]
+            port_info._merge_from_port_list(direction, net_type, range_expr)
+
+        self._ports[port_name]._declared_in_port_list = True
+        
+        return self._ports[port_name]
+    
+    def register_from_body(self, port_name: str, direction: str,
+                          net_type: Optional[str] = None,
+                          range_expr: Optional[RangeExpression] = None) -> None:
+        if port_name not in self._ports:
+            port_info = PortInfo(
+                name=port_name,
+                direction=direction,
+                net_type=net_type or "wire",
+                range_expr=range_expr
+            )
+            self._ports[port_name] = port_info
+            self._port_order.append(port_name)
+        else:
+            port_info = self._ports[port_name]
+            port_info._merge_from_body_declaration(direction, net_type, range_expr)
+    
+    def get_port(self, port_name: str) -> Optional[PortInfo]:
+        return self._ports.get(port_name)
+    
+    def get_all_ports(self) -> List[PortInfo]:
+        return [self._ports[name] for name in self._port_order if name in self._ports]
+    
+    def get_complete_ports(self) -> List[PortInfo]:
+        return [port for port in self.get_all_ports() if port._is_fully_defined()]
+    
+    def get_incomplete_ports(self) -> List[PortInfo]:
+        return [port for port in self.get_all_ports() if not port._is_fully_defined()]
+    
+    def validate_ports(self) -> List[str]:
+        errors = []
+        for port in self.get_all_ports():
+            if not port._is_fully_defined():
+                status = port._get_definition_status()
+                missing_info = []
+                if not port.direction:
+                    missing_info.append("direction")
+                if not port.net_type:
+                    missing_info.append("net_type")
+                    
+                errors.append(
+                    f"Port '{port.name}' Define not complate (Status: {status}, Missing: {', '.join(missing_info)})"
+                )
+        return errors
+
+
+
 class ASTVisitor(ABC):
     
     def visit(self, node: BaseASTNode) -> Any:
@@ -591,15 +735,121 @@ class VerilogAST:
 class ASTBuilder:
     
     def __init__(self):
-        self.current_module: Optional[ModuleDeclaration] = None
+        self.module_stack: List[ModuleDeclaration] = []  
+        self.pending_items: Dict[str, List] = {}  
+        self.current_parsing_module: Optional[str] = None 
+        self.port_registries: Dict[str, PortRegistry] = {}
+    
+    def _get_or_create_port_registry(self, module_name: str) -> PortRegistry:
+        if module_name not in self.port_registries:
+            self.port_registries[module_name] = PortRegistry()
+        return self.port_registries[module_name]
+    
+    def register_port_from_list(self, module_name: str, port_name: str, 
+                               direction: Optional[str] = None,
+                               net_type: Optional[str] = None,
+                               msb_expr: Optional[str] = None,
+                               lsb_expr: Optional[str] = None) -> PortInfo:
+        registry = self._get_or_create_port_registry(module_name)
         
+        range_expr = None
+        if msb_expr is not None and lsb_expr is not None:
+            range_expr = ExpressionSimplifier.create_range_expression(msb_expr, lsb_expr)
+        
+        return registry.register_from_port_list(port_name, direction, net_type, range_expr)
+    
+    def register_port_from_body(self, module_name: str, port_name: str,
+                               direction: str, net_type: Optional[str] = None,
+                               msb_expr: Optional[str] = None,
+                               lsb_expr: Optional[str] = None) -> None:
+        registry = self._get_or_create_port_registry(module_name)
+        
+        range_expr = None
+        if msb_expr is not None and lsb_expr is not None:
+            range_expr = ExpressionSimplifier.create_range_expression(msb_expr, lsb_expr)
+        
+        registry.register_from_body(port_name, direction, net_type, range_expr)
+
+    def get_module_ports(self, module_name: str) -> List[PortInfo]:
+        if module_name in self.port_registries:
+            return self.port_registries[module_name].get_all_ports()
+        return []
+    
+    def validate_module_ports(self, module_name: str) -> List[str]:
+        if module_name in self.port_registries:
+            return self.port_registries[module_name].validate_ports()
+        return []
+
+    @property
+    def current_module(self) -> Optional[ModuleDeclaration]:
+        return self.module_stack[-1] if self.module_stack else None
+    
+    def push_module_context(self, module_name: str) -> None:
+        if not hasattr(self, 'pending_items') or self.pending_items is None:
+            self.pending_items = {}
+
+        self.pending_items[module_name] = []
+        self.current_parsing_module = module_name
+        
+    def update_port_declaration(self, port: PortDeclaration, 
+                              direction: str, net_type: str, 
+                              range_expr: Optional[RangeExpression] = None) -> None:
+        port.direction = direction
+        port.net_type = net_type
+        if range_expr:
+            port.range_expr = range_expr
+
     def create_design_unit(self) -> DesignUnit:
-        return DesignUnit()
-        
+        return DesignUnit() 
+    
     def create_module_declaration(self, name: str, **kwargs) -> ModuleDeclaration:
         module = ModuleDeclaration(name, **kwargs)
-        self.current_module = module
+        self.module_stack.append(module)
+        
+        if name in self.pending_items:
+            self._process_pending_items(module, name)
+            
         return module
+
+    def pop_module_context(self) -> Optional[ModuleDeclaration]:
+        if self.module_stack:
+            module = self.module_stack.pop()
+            return module
+        return None
+    
+    def add_parameter_to_current_or_pending(self, param: ParameterDeclaration) -> None:
+        
+        if self.current_module:
+            self.add_parameter(self.current_module, param)
+        
+        elif self.current_parsing_module in self.pending_items:
+            self.pending_items[self.current_parsing_module].append(('parameter', param))
+        
+        else:
+            raise ValueError(f"No valid context for parameter '{param.identifier}'")
+    
+    def _process_pending_items(self, module: ModuleDeclaration, module_name: str) -> None:
+        pending_list = self.pending_items.get(module_name, [])
+        for item_type, item in pending_list:
+            if item_type == 'parameter':
+                self.add_parameter(module, item)
+        
+        if module_name in self.pending_items:
+            del self.pending_items[module_name]
+
+    def merge_port_declarations(self, module: ModuleDeclaration,port_declarations: List[Dict]) -> None:
+        port_map = {port.identifier: port for port in module.ports}
+        
+        for port_decl in port_declarations:
+            port_name = port_decl['name']
+            if port_name in port_map:
+                port = port_map[port_name]
+                self.update_port_declaration(
+                    port, 
+                    port_decl['direction'], 
+                    port_decl['net_type'],
+                    port_decl.get('range_expr')
+                )
         
     def create_parameter(self, identifier: str, parameter_type: str = "parameter", 
                         default_value: str = "", data_type: Optional[str] = None, 
