@@ -21,7 +21,7 @@ along with VCG.  If not, see <https://www.gnu.org/licenses/>.
 # Author: cxhy
 # Created: 2025-07-31
 # Description: 
-import re
+import re,os
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict
 from vcg_execution_engine import VCGExecutionEngine
@@ -47,7 +47,12 @@ class VCGFileProcessor:
         self.logger = get_vcg_logger('FileProcessor')
 
     def process_file(self, file_path: Path) -> None:
+        original_dir = os.getcwd()
+        main_file_dir = file_path.parent.resolve()
         try:
+            self.logger.info(f"Switching to main file directiory: {main_file_dir}")
+            os.chdir(str(main_file_dir))
+
             set_file_context(file_path)
             self.logger.info(f"Starting to process file: {file_path.name}")
 
@@ -93,6 +98,8 @@ class VCGFileProcessor:
             self.logger.error(f"Error processing file: {e}")
             raise VCGFileError(f"Read file Error {file_path}: {e}")
         finally:
+            os.chdir(original_dir)
+            self.logger.info(f"Resstored working directory: {original_dir}")
             clear_file_context()
     
     def _extract_vcg_blocks(self, content: str) -> List[VCGBlock]:
