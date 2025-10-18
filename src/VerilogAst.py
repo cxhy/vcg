@@ -21,940 +21,374 @@ along with VCG.  If not, see <https://www.gnu.org/licenses/>.
 # Author: cxhy
 # Created: 2025-07-31
 # Description: 
+#┌─────────────────────────────────────────────────────────┐
+#│                    PLY Parser Layer                     │
+#└────────────────────┬────────────────────────────────────┘
+#                     │
+#                     ▼
+#┌─────────────────────────────────────────────────────────┐
+#│              VerilogASTBuilder                          │
+#│  ┌─────────────────┐      ┌──────────────────┐          │
+#│  │ PortDeclaration │      │ ParameterInfo    │          │
+#│  └─────────────────┘      └──────────────────┘          │
+#└────────────────────┬────────────────────────────────────┘
+#                     │ build()
+#                     ▼
+#              ┌─────────────┐
+#              │ PortFactory │ 
+#              └─────────────┘
+#                     │
+#                     ▼
+#┌─────────────────────────────────────────────────────────┐
+#│                   VerilogAST                            │
+#│  ┌──────────────────┐      ┌──────────────────┐         │
+#│  │  PortManager     │      │ ParameterManager │         │
+#│  │  (PortInfo)      │      │ (ParameterInfo)  │         │
+#│  └──────────────────┘      └──────────────────┘         │
+#└─────────────────────────────────────────────────────────┘
 
-from abc import ABC, abstractmethod
 from typing import List, Optional, Any, Dict, Union
 from dataclasses import dataclass, field
 from enum import Enum
 import re
-
+from sympy import sympify, simplify
 
 class PortDirection(Enum):
     INPUT = "input"
-    OUTPUT = "output"
+    OUTPUT = "output" 
     INOUT = "inout"
 
+class PortType(Enum):
+    SIMPLE = "simple"           # 单bit端口
+    VECTOR = "vector"          # 向量端口 [msb:lsb]
+    ARRAY_2D = "array_2d"     # 二维数组
+    ARRAY_3D = "array_3d"     # 三维数组
+    INTERFACE = "interface"    # 接口端口(预留)
 
-class NetType(Enum):
-    WIRE = "wire"
-    REG = "reg"
-    LOGIC = "logic"
+class ExpressionCalculator:
+    
+    def __init__(self):
+        self.patterns = {
+            'token': re.compile(r'(\$[a-zA-Z_]\w*\([^)]*\)|\d+\.?\d*|\w+|[+\-*/()])')
+        }
+    def parse_width_expression(self, expr: str) -> Union[int, str, float]:
+        if not expr or not expr.strip():
+            return 0
+        
+        return self._sympy_parse(expr.strip())
+    
+    def _sympy_parse(self, expr: str) -> Union[int, str, float]:
+        try:
+            processed, mapping = self._handle_dollar_funcs(expr)
+            result = simplify(sympify(processed))
+            return self._format_result(result, mapping)
+        except Exception:
+            return expr 
+    
+    def _handle_dollar_funcs(self, expr: str) -> tuple[str, dict]:
+        mapping = {}
+        counter = 0
+        
+        def replace_func(match):
+            nonlocal counter
+            symbol = f"D{counter}"
+            mapping[symbol] = match.group(0)
+            counter += 1
+            return symbol
+        processed = re.sub(r'\$\w+\([^)]*\)', replace_func, expr)
+        return processed, mapping
+    
+    def _format_result(self, result, mapping: dict) -> Union[int, str, float]:
+        if result.is_number:
+            val = float(result)
+            return int(val) if val == int(val) else val
+        
+        result_str = str(result)
+        for symbol, func in mapping.items():
+            result_str = result_str.replace(symbol, func)
+        
+        return result_str.replace(' ', '')
 
-
-class ParameterType(Enum):
-    PARAMETER = "parameter"
-    LOCALPARAM = "localparam"
-
+_calculator = ExpressionCalculator()
 
 @dataclass
-class RangeExpression:
-    msb_expr: str      
-    lsb_expr: str      
-    msb_value: Optional[int] = None    
-    lsb_value: Optional[int] = None    
-    width_expr: Optional[str] = None   
-    width_value: Optional[int] = None  
-    
-    def __post_init__(self):
-        if self.width_expr is None:
-            self.width_expr = self._calculate_width_expression()
-        if self.width_value is None and self.msb_value is not None and self.lsb_value is not None:
-            self.width_value = abs(self.msb_value - self.lsb_value) + 1
-    
-    def _calculate_width_expression(self) -> str:
-        if self.msb_expr == self.lsb_expr:
-            return "1"
-        
-        if self.lsb_expr == "0":
-            if self.msb_expr.isdigit():
-                return str(int(self.msb_expr) + 1)
-            else:
-                simplified_width = self._simplify_plus_one_expression(self.msb_expr)
-                if simplified_width:
-                    return simplified_width
-                else:
-                    return f"{self.msb_expr}+1"
-        
-        if self.msb_expr.isdigit() and self.lsb_expr.isdigit():
-            msb_val = int(self.msb_expr)
-            lsb_val = int(self.lsb_expr)
-            return str(abs(msb_val - lsb_val) + 1)
-        else:
-            return f"({self.msb_expr}-{self.lsb_expr}+1)"
-    
-    def _simplify_plus_one_expression(self, expr: str) -> Optional[str]:
-        
-        expr = expr.strip()
-        
-        pattern = r'^(.+?)\s*-\s*1$'
-        match = re.match(pattern, expr)
-        
-        if match:
-            base_expr = match.group(1).strip()
-            
-            if re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', base_expr):
-                return base_expr
-            
-            if base_expr.startswith('(') and base_expr.endswith(')'):
-                return base_expr[1:-1]
-            
-            return base_expr
-        
-        return None
-    
-    @property
-    def is_parametric(self) -> bool:
-        return not (self.msb_expr.isdigit() and self.lsb_expr.isdigit())
-    
-    @property
-    def is_single_bit(self) -> bool:
-        return self.msb_expr == self.lsb_expr or (
-            self.msb_value is not None and 
-            self.lsb_value is not None and 
-            self.msb_value == self.lsb_value
-        )
-
+class PortDeclaration:
+    """端口声明"""
+    name: str
+    direction: Optional[str] = None
+    net_type: Optional[str] = None
+    msb_expr: Optional[str] = None
+    lsb_expr: Optional[str] = None
+    array_dims: List[str] = field(default_factory=list)
+    interface_type: Optional[str] = None
 
 @dataclass
 class PortInfo:
-    name: str  
-    direction: str
-    net_type: str  
-    range_expr: Optional[RangeExpression] = None 
-    _declared_in_port_list: bool = field(default=False, init=False)
-    _declared_in_body: bool = field(default=False, init=False)
-    _is_complete: bool = field(default=False, init=False)
-    _pending_updates: Dict[str, Any] = field(default_factory=dict, init=False)
+    """端口信息"""
+    name: str
+    direction: Optional[str] = None
+    net_type: Optional[str] = None
+    msb_expr: Optional[str] = None
+    lsb_expr: Optional[str] = None
+    array_dims: List[str] = field(default_factory=list)
+    interface_type: Optional[str] = None
     
     @property
-    def width(self) -> Optional[Union[int, str]]:
-        if self.range_expr is None:
+    def port_type(self) -> PortType:
+        if self.interface_type:
+            return PortType.INTERFACE
+        elif self.array_dims:
+            return PortType.ARRAY_3D if len(self.array_dims) >= 3 else PortType.ARRAY_2D
+        elif self.msb_expr is not None and self.lsb_expr is not None:
+            return PortType.VECTOR
+        else:
+            return PortType.SIMPLE
+    
+    @property
+    def is_complete(self) -> bool:
+        return self.direction is not None
+    
+    @property
+    def width(self) -> Union[int, str, float]:
+        if self.port_type == PortType.SIMPLE:
             return 1
-        if self.range_expr.width_value is not None:
-            return self.range_expr.width_value
-        return self.range_expr.width_expr
-
-    @property
-    def msb(self) -> Optional[Union[int, str]]:
-        if self.range_expr is None:
-            return None
-        if self.range_expr.msb_value is not None:
-            return self.range_expr.msb_value
-        return self.range_expr.msb_expr
-    
-    @property
-    def lsb(self) -> Optional[Union[int, str]]:
-        if self.range_expr is None:
-            return None
-        if self.range_expr.lsb_value is not None:
-            return self.range_expr.lsb_value
-        return self.range_expr.lsb_expr
-    
-    @property
-    def is_vector(self) -> bool:
-        if self.range_expr is None:
-            return False
-        return not self.range_expr.is_single_bit
-    
-    @property
-    def is_parametric(self) -> bool:
-        if self.range_expr is None:
-            return False
-        return self.range_expr.is_parametric
-    
-    def get_width_description(self) -> str:
-        if self.range_expr is None:
-            return "1 bit"
-        
-        if self.range_expr.is_single_bit:
-            return "1 bit"
-        
-        if self.range_expr.width_value is not None:
-            return f"{self.range_expr.width_value} bits"
+        elif self.port_type == PortType.VECTOR:
+            return self._calculate_vector_width()
         else:
-            return f"{self.range_expr.width_expr} bits"
+            return "array"
     
-    def get_range_description(self) -> str:
-        if self.range_expr is None:
-            return "single bit"
+    def _calculate_vector_width(self) -> Union[int, str, float]:
+        if not self.msb_expr or not self.lsb_expr:
+            return 1
         
-        if self.range_expr.is_single_bit:
-            return "single bit"
+        msb_val = _calculator.parse_width_expression(self.msb_expr)
+        lsb_val = _calculator.parse_width_expression(self.lsb_expr)
         
-        return f"[{self.range_expr.msb_expr}:{self.range_expr.lsb_expr}]"
-    
-    def _merge_from_body_declaration(self, direction: Optional[str] = None, net_type: Optional[str] = None,
-                                   range_expr: Optional[RangeExpression] = None) -> None:
-        updated = False
+        if isinstance(msb_val, int) and isinstance(lsb_val, int):
+            return abs(msb_val - lsb_val) + 1
         
-        if direction and (not self.direction or self.direction == ""):
-            self.direction = direction
-            updated = True
-        elif direction and self.direction and self.direction != direction:
-            if self._declared_in_port_list:
-                pass
-            else:
-                self.direction = direction
-                updated = True
-            
-        if net_type and (not self.net_type or self.net_type == "wire"):
-            self.net_type = net_type
-            updated = True
-        elif net_type and self.net_type != net_type:
-            if self._declared_in_port_list:
-                pass
-            else:
-                self.net_type = net_type
-                updated = True
-                
-        if range_expr and not self.range_expr:
-            self.range_expr = range_expr
-            updated = True
-        elif range_expr and self.range_expr:
-            if not self._declared_in_port_list:
-                self.range_expr = range_expr
-                updated = True
+        if str(lsb_val) == "0" and str(self.msb_expr).endswith("-1"):
+            return self.msb_expr[:-2]
         
-        if updated:
-            self._declared_in_body = True
-            self._update_completeness()
+        width_expr = f"({msb_val})-({lsb_val})+1"
+        return _calculator.parse_width_expression(width_expr)
     
-    def _merge_from_port_list(self, direction: Optional[str] = None,
-                            net_type: Optional[str] = None,
-                            range_expr: Optional[RangeExpression] = None) -> None:
-        if direction:
-            self.direction = direction
-        if net_type:
-            self.net_type = net_type
-        if range_expr:
-            self.range_expr = range_expr
-            
-        self._declared_in_port_list = True
-        self._update_completeness()
-
-    def _update_completeness(self) -> None:
-        self._is_complete = bool(
-            self.name and 
-            self.direction and 
-            self.direction != ""
-            #self.net_type is not None
-        )
-    
-    def _is_fully_defined(self) -> bool:
-        return self._is_complete
-    
-    def _get_definition_status(self) -> str:
-        if self._declared_in_port_list and self._declared_in_body:
-            return "both"
-        elif self._declared_in_port_list:
-            return "port_list_only"
-        elif self._declared_in_body:
-            return "body_only"
+    @property
+    def range_string(self) -> str:
+        if self.port_type == PortType.VECTOR:
+            return f"[{self.msb_expr}:{self.lsb_expr}]"
+        elif self.array_dims:
+            base_range = f"[{self.msb_expr}:{self.lsb_expr}]" if self.msb_expr else ""
+            array_range = "".join(f"[{dim}]" for dim in self.array_dims)
+            return f"{base_range}{array_range}".strip()
         else:
-            return "undefined"
+            return ""
+
 
 @dataclass
 class ParameterInfo:
-    name: str       
-    param_type: str 
-    default_value: str 
-    data_type: Optional[str] = None
-    
-    @property
-    def is_localparam(self) -> bool:
-        return self.param_type == ParameterType.LOCALPARAM.value
-
-
-@dataclass
-class ModuleInfo:
+    """参数信息"""
     name: str
-    parameters: List[ParameterInfo] = field(default_factory=list)
-    ports: List[PortInfo] = field(default_factory=list)
-    body_ignored: bool = True
+    param_type: str = "parameter"
+    default_value: str = ""
+    data_type: Optional[str] = None
 
-
-@dataclass
-class Range:
-    msb: int
-    lsb: int
+class PortFactory:
     
-    @property
-    def width(self) -> int:
-        return abs(self.msb - self.lsb) + 1
-
-
-
-class BaseASTNode(ABC):
-    
-    def __init__(self, node_type: str, source_line: int = 0,
-                 source_column: int = 0, source_position: int = 0):
-        self.node_type = node_type
-        self.source_line = source_line
-        self.source_column = source_column
-        self.source_position = source_position
-        self.parent: Optional[BaseASTNode] = None
-        self.children: List[BaseASTNode] = []
+    @staticmethod
+    def to_info(decl: PortDeclaration) -> PortInfo:
+        """将Declaration转换为Info（唯一方法）
         
-    def add_child(self, child: 'BaseASTNode') -> None:
-        if child is not None:
-            child.parent = self
-            self.children.append(child)
-
-    def remove_child(self, child: 'BaseASTNode') -> None:
-        if child in self.children:
-            child.parent = None
-            self.children.remove(child)
+        这是PLY场景的核心需求：
+        - Builder阶段收集Declaration
+        - build()时转换为Info
+        
+        Args:
+            decl: 端口声明对象
             
-    def accept(self, visitor: 'ASTVisitor') -> Any:
-        return visitor.visit(self)
-        
-    def __str__(self) -> str:
-        return f"{self.node_type}@{self.source_line}:{self.source_column}"
-
-class DesignUnit(BaseASTNode):
-    
-    def __init__(self):
-        super().__init__("DesignUnit")
-        self.modules: List['ModuleDeclaration'] = []
-    def add_module(self, module: 'ModuleDeclaration') -> None:
-        self.add_child(module)
-        self.modules.append(module)
-
-
-class Expression(BaseASTNode):
-    
-    def __init__(self, node_type: str, **kwargs):
-        super().__init__(node_type, **kwargs)
-        self.value: str = ""
-
-
-class Identifier(Expression):
-    
-    def __init__(self, name: str, **kwargs):
-        super().__init__("Identifier", **kwargs)
-        self.name = name
-        self.value = name
-
-
-class NumericLiteral(Expression):
-    
-    def __init__(self, value: str, **kwargs):
-        super().__init__("NumericLiteral", **kwargs)
-        self.value = value
-
-
-class StringLiteral(Expression):
-    
-    def __init__(self, value: str, **kwargs):
-        super().__init__("StringLiteral", **kwargs)
-        self.value = value
-
-
-class Declaration(BaseASTNode):
-    
-    def __init__(self, node_type: str, identifier: str, **kwargs):
-        super().__init__(node_type, **kwargs)
-        self.identifier = identifier
-
-
-class ParameterDeclaration(Declaration):
-    
-    def __init__(self, identifier: str, parameter_type: str = "parameter", 
-                 default_value: Optional[Expression] = None, 
-                 data_type: Optional[str] = None, **kwargs):
-        super().__init__("ParameterDeclaration", identifier, **kwargs)
-        self.parameter_type = parameter_type
-        self.default_value = default_value or StringLiteral("")
-        self.data_type = data_type
-        if self.default_value:
-            self.add_child(self.default_value)
-    
-    def to_info(self) -> ParameterInfo:
-        return ParameterInfo(
-            name=self.identifier,
-            param_type=self.parameter_type,
-            default_value=self.default_value.value if self.default_value else "",
-            data_type=self.data_type
-        )
-
-
-class PortDeclaration(Declaration):
-    
-    def __init__(self, identifier: str, direction: str,
-                 net_type: str = "wire", range_expr: Optional[RangeExpression] = None, **kwargs):
-        super().__init__("PortDeclaration", identifier, **kwargs)
-        self.direction = direction
-        self.net_type = net_type
-        self.range_expr = range_expr
-    def to_info(self) -> PortInfo:
+        Returns:
+            PortInfo: 端口信息对象
+        """
         return PortInfo(
-            name=self.identifier,
-            direction=self.direction,
-            net_type=self.net_type,
-            range_expr=self.range_expr
+            name=decl.name,
+            direction=decl.direction,
+            net_type=decl.net_type or "wire",  
+            msb_expr=decl.msb_expr,
+            lsb_expr=decl.lsb_expr,
+            array_dims=decl.array_dims.copy() if decl.array_dims else [],
+            interface_type=decl.interface_type
         )
 
-
-class ModuleDeclaration(BaseASTNode):
-    
-    def __init__(self, module_name: str, **kwargs):
-        super().__init__("ModuleDeclaration", **kwargs)
-        self.module_name = module_name
-        self.parameters: List[ParameterDeclaration] = []
-        self.ports: List[PortDeclaration] = []
-        self.internal_declarations: List[Declaration] = []
-        self.body_placeholder = True 
-        
-    def add_parameter(self, parameter: ParameterDeclaration) -> None:
-        self.add_child(parameter)
-        self.parameters.append(parameter)
-        
-    def add_port(self, port: PortDeclaration) -> None:
-        self.add_child(port)
-        self.ports.append(port)
-        
-    def add_internal_declaration(self, declaration: Declaration) -> None:
-        self.add_child(declaration)
-        self.internal_declarations.append(declaration)
-        
-    def to_info(self) -> ModuleInfo:
-        return ModuleInfo(
-            name=self.module_name,
-            parameters=[p.to_info() for p in self.parameters],
-            ports=[p.to_info() for p in self.ports],
-            body_ignored=self.body_placeholder
-        )
-
-
-class ErrorNode(BaseASTNode):
-    
-    def __init__(self, error_message: str, recovery_point: str = "", **kwargs):
-        super().__init__("ErrorNode", **kwargs)
-        self.error_message = error_message
-        self.recovery_point = recovery_point
-
-class ExpressionSimplifier:
-    
-    @staticmethod
-    def parse_expression(expr_str: str) -> Optional[int]:
-        try:
-            expr_str = expr_str.strip()
-            if expr_str.isdigit():
-                return int(expr_str)
-            
-            if "'" in expr_str:
-                if 'd' in expr_str:
-                    return int(expr_str.split('d')[-1])
-                elif 'h' in expr_str:
-                    return int(expr_str.split('h')[-1], 16)
-                elif 'b' in expr_str:
-                    return int(expr_str.split('b')[-1], 2)
-                elif 'o' in expr_str:
-                    return int(expr_str.split('o')[-1], 8)
-            
-            return None
-        except (ValueError, IndexError):
-            return None
-    
-    @staticmethod
-    def simplify_numeric_parts(expr_str: str) -> tuple[str, Optional[int]]:
-        expr_str = expr_str.strip()
-        
-        numeric_val = ExpressionSimplifier.parse_expression(expr_str)
-        if numeric_val is not None:
-            return expr_str, numeric_val
-        
-        if re.match(r'^[\d+\-*/\(\)\s]+$', expr_str):
-            try:
-                result = eval(expr_str)
-                return str(result), int(result)
-            except:
-                pass
-        
-        return expr_str, None
-    
-    @staticmethod
-    def create_range_expression(msb_str: str, lsb_str: str) -> RangeExpression:
-        msb_simplified, msb_val = ExpressionSimplifier.simplify_numeric_parts(msb_str)
-        lsb_simplified, lsb_val = ExpressionSimplifier.simplify_numeric_parts(lsb_str)
-        
-        return RangeExpression(
-            msb_expr=msb_simplified,
-            lsb_expr=lsb_simplified,
-            msb_value=msb_val,
-            lsb_value=lsb_val
-        )
-
-class PortRegistry:  
+class ParameterManager:
+    """参数管理器"""
     def __init__(self):
-        self._ports: Dict[str, PortInfo] = {}  
-        self._port_order: List[str] = [] 
+        self._parameters: Dict[str, ParameterInfo] = {}
+        self._parameter_order: List[str] = []
     
-    def register_from_port_list(self, port_name: str, direction: Optional[str] = None,
-                              net_type: Optional[str] = None, 
-                              range_expr: Optional[RangeExpression] = None) -> PortInfo:
-        if port_name not in self._ports:
-            port_info = PortInfo(
-                name=port_name,
-                direction=direction or "",
-                net_type=net_type or "wire",
-                range_expr=range_expr
-            )
-            self._ports[port_name] = port_info
-            self._port_order.append(port_name)
-        else:
-            port_info = self._ports[port_name]
-            port_info._merge_from_port_list(direction, net_type, range_expr)
-
-        self._ports[port_name]._declared_in_port_list = True
+    def add_parameter(self, param_name: str, **kwargs) -> None:
+        if param_name not in self._parameters:
+            self._parameter_order.append(param_name)
         
-        return self._ports[port_name]
+        self._parameters[param_name] = ParameterInfo(
+            name=param_name,
+            param_type=kwargs.get('param_type', 'parameter'),
+            default_value=kwargs.get('default_value', ''),
+            data_type=kwargs.get('data_type')
+        )
     
-    def register_from_body(self, port_name: str, direction: str,
-                          net_type: Optional[str] = None,
-                          range_expr: Optional[RangeExpression] = None) -> None:
-        if port_name not in self._ports:
-            port_info = PortInfo(
-                name=port_name,
-                direction=direction,
-                net_type=net_type or "wire",
-                range_expr=range_expr
-            )
-            self._ports[port_name] = port_info
-            self._port_order.append(port_name)
-        else:
-            port_info = self._ports[port_name]
-            port_info._merge_from_body_declaration(direction, net_type, range_expr)
+    def get_all_parameters(self) -> List[ParameterInfo]:
+        return [self._parameters[name] for name in self._parameter_order]
+
+class PortManager:
+    def __init__(self):
+        self._ports: Dict[str, PortInfo] = {}
+        self._port_order: List[str] = []
     
-    def get_port(self, port_name: str) -> Optional[PortInfo]:
-        return self._ports.get(port_name)
+    def add_port_info(self, port_info: PortInfo) -> None:
+        if port_info.name not in self._ports:
+            self._port_order.append(port_info.name)
+        self._ports[port_info.name] = port_info
     
     def get_all_ports(self) -> List[PortInfo]:
-        return [self._ports[name] for name in self._port_order if name in self._ports]
-    
-    def get_complete_ports(self) -> List[PortInfo]:
-        return [port for port in self.get_all_ports() if port._is_fully_defined()]
-    
-    def get_incomplete_ports(self) -> List[PortInfo]:
-        return [port for port in self.get_all_ports() if not port._is_fully_defined()]
-    
-    def validate_ports(self) -> List[str]:
-        errors = []
-        for port in self.get_all_ports():
-            if not port._is_fully_defined():
-                status = port._get_definition_status()
-                missing_info = []
-                if not port.direction:
-                    missing_info.append("direction")
-                if not port.net_type:
-                    missing_info.append("net_type")
-                    
-                errors.append(
-                    f"Port '{port.name}' Define not complate (Status: {status}, Missing: {', '.join(missing_info)})"
-                )
-        return errors
+        return [self._ports[name] for name in self._port_order]
 
-
-
-class ASTVisitor(ABC):
-    
-    def visit(self, node: BaseASTNode) -> Any:
-        method_name = f"visit_{node.node_type.lower()}"
-        visitor_method = getattr(self, method_name, self.generic_visit)
-        return visitor_method(node)
-    
-    def visit_designunit(self, node: DesignUnit) -> Any:
-        return self.generic_visit(node)
-    def visit_moduledeclaration(self, node: ModuleDeclaration) -> Any:
-        return self.generic_visit(node)
-        
-    def visit_parameterdeclaration(self, node: ParameterDeclaration) -> Any:
-        return self.generic_visit(node)
-        
-    def visit_portdeclaration(self, node: PortDeclaration) -> Any:
-        return self.generic_visit(node)
-        
-    def visit_identifier(self, node: Identifier) -> Any:
-        return self.generic_visit(node)
-        
-    def visit_numericliteral(self, node: NumericLiteral) -> Any:
-        return self.generic_visit(node)
-        
-    def visit_stringliteral(self, node: StringLiteral) -> Any:
-        return self.generic_visit(node)
-        
-    def visit_errornode(self, node: ErrorNode) -> Any:
-        return self.generic_visit(node)
-        
-    def generic_visit(self, node: BaseASTNode) -> Any:
-        for child in node.children:
-            self.visit(child)
-
-class ModuleInfoExtractor(ASTVisitor):
+class VerilogASTBuilder:
+    """AST构建器"""
     
     def __init__(self):
-        self.module_info: Optional[ModuleInfo] = None
-        
-    def extract_module_info(self, ast:DesignUnit) -> Optional[ModuleInfo]:
-        self.module_info = None
-        self.visit(ast)
-        return self.module_info
-        
-    def get_module_name(self, ast: DesignUnit) -> Optional[str]:
-        info = self.extract_module_info(ast)
-        return info.name if info else None
-        
-    def get_module_ports(self, ast: DesignUnit) -> List[PortInfo]:
-        info = self.extract_module_info(ast)
-        return info.ports if info else []
-        
-    def get_module_parameters(self, ast: DesignUnit) -> List[ParameterInfo]:
-        info = self.extract_module_info(ast)
-        return info.parameters if info else []
-        
-    def visit_moduledeclaration(self, node: ModuleDeclaration) -> Any:
-        if self.module_info is None:
-            self.module_info = node.to_info()
-        return self.generic_visit(node)
-
-
-class CodeGenerator(ASTVisitor):
+        self._module_name: Optional[str] = None
+        self._parameters: Dict[str, ParameterInfo] = {}
+        self._parameter_order: List[str] = []
+        self._port_decls: Dict[str, PortDeclaration] = {}
+        self._port_order: List[str] = []
+        self._built: bool = False
     
-    def __init__(self):
-        self.indent_level = 0
-        self.output_lines: List[str] = []
-    def generate_module_header(self, module: ModuleDeclaration) -> str:
-        lines = []
-        if module.parameters:
-            lines.append(f"module {module.module_name} #(")
-            param_lines = []
-            for param in module.parameters:
-                param_str = f"    {param.parameter_type} {param.identifier}"
-                if param.default_value and param.default_value.value:
-                    param_str += f" = {param.default_value.value}"
-                param_lines.append(param_str)
-            lines.append(",\n".join(param_lines))
-            lines.append(") (")
-        else:
-            lines.append(f"module {module.module_name} (")
-        if module.ports:
-            port_lines = []
-            for port in module.ports:
-                port_str = f"    {port.direction} "
-                if port.net_type != "wire": 
-                    port_str += f"{port.net_type} "
-                if port.range_expr:
-                    port_str += f"[{port.range_expr.msb_expr}:{port.range_expr.lsb_expr}] "
-                port_str += port.identifier
-                port_lines.append(port_str)
-            lines.append(",\n".join(port_lines))
-        lines.append(");")
-        return "\n".join(lines)
+    def set_module_name(self, name: str) -> 'VerilogASTBuilder':
+        if self._module_name is not None:
+            raise ValueError(f"Module name already set: {self._module_name}")
+        self._module_name = name
+        return self
+    
+    def add_parameter(self, name: str, **kwargs) -> 'VerilogASTBuilder':
+        if name not in self._parameters:
+            self._parameter_order.append(name)
         
-    def generate_port_list(self, ports: List[PortDeclaration]) -> str:
-        if not ports:
-            return ""
-            
-        port_lines = []
-        for port in ports:
-            port_str = f"{port.direction} "
-            if port.net_type != "wire":
-                port_str += f"{port.net_type} "
-            if port.range_expr:
-                port_str += f"[{port.range_expr.msb_expr}:{port.range_expr.lsb_expr}] "
-            port_str += port.identifier
-            port_lines.append(port_str)
-            
-        return ",\n    ".join(port_lines)
+        self._parameters[name] = ParameterInfo(
+            name=name,
+            param_type=kwargs.get('param_type', 'parameter'),
+            default_value=kwargs.get('default_value', ''),
+            data_type=kwargs.get('data_type')
+        )
+        return self
+    
+    def add_port(self, name: str, **kwargs) -> 'VerilogASTBuilder':
+        if name not in self._port_decls:
+            self._port_order.append(name)
+            self._port_decls[name] = PortDeclaration(name=name)
+        
+        decl = self._port_decls[name]
+        for key, value in kwargs.items():
+            if value is not None and hasattr(decl, key):
+                setattr(decl, key, value)
+        
+        return self
+    
+    def update_port(self, name: str, **kwargs) -> 'VerilogASTBuilder':
+        return self.add_port(name, **kwargs)
+    
+    def build(self) -> 'VerilogAST':
+        if self._built:
+            raise VerilogASTError("Builder already built")
+        
+        if not self._module_name:
+            raise VerilogASTError("Module name not set")
+        
+        ast = VerilogAST(self._module_name)
+        
+        for name in self._parameter_order:
+            param = self._parameters[name]
+            ast.parameter_manager._parameters[name] = param
+            ast.parameter_manager._parameter_order.append(name)
+        
+        for name in self._port_order:
+            decl = self._port_decls[name]
+            port_info = PortFactory.to_info(decl)
+            ast.port_manager.add_port_info(port_info)
+        
+        self._built = True
+        return ast
+    
+    def reset(self) -> 'VerilogASTBuilder':
+        self._module_name = None
+        self._parameters.clear()
+        self._parameter_order.clear()
+        self._port_decls.clear()
+        self._port_order.clear()
+        self._built = False
+        return self
 
 class VerilogAST:
-    def __init__(self, root: DesignUnit):
-        self.root = root
-        self._info_extractor = ModuleInfoExtractor()
-        self._cached_module_info: Optional[ModuleInfo] = None
-        
-    def _get_module_info(self) -> Optional[ModuleInfo]:
-        if self._cached_module_info is None:
-            self._cached_module_info = self._info_extractor.extract_module_info(self.root)
-        return self._cached_module_info
-        
-    def invalidate_cache(self) -> None:
-        self._cached_module_info = None
-    def get_module_name(self) -> Optional[str]:
-        info = self._get_module_info()
-        return info.name if info else None
-        
-    def get_module_ports(self) -> List[PortInfo]:
-        info = self._get_module_info()
-        return info.ports if info else []
-        
-    def get_module_parameters(self) -> List[ParameterInfo]:
-        info = self._get_module_info()
-        return info.parameters if info else []
+    """Verilog AST"""
+    def __init__(self, module_name: str = ""):
+        self.module_name = module_name
+        self.parameter_manager = ParameterManager()
+        self.port_manager = PortManager()
+    def get_port_info(self) -> List[PortInfo]:
+        return self.port_manager.get_all_ports()
     
-    def get_input_ports(self) -> List[PortInfo]:
-        return [port for port in self.get_module_ports() 
-                if port.direction == PortDirection.INPUT.value]
+    def get_parameter_info(self) -> List[ParameterInfo]:
+        return self.parameter_manager.get_all_parameters()
+    
+    def get_module_info(self) -> Dict[str, Any]:
+        """获取完整的模块信息
         
-    def get_output_ports(self) -> List[PortInfo]:
-        return [port for port in self.get_module_ports() 
-                if port.direction == PortDirection.OUTPUT.value]
+        返回包含模块名、参数、端口和统计信息的字典
         
-    def get_inout_ports(self) -> List[PortInfo]:
-        return [port for port in self.get_module_ports() 
-                if port.direction == PortDirection.INOUT.value]
-
-    def find_port_by_name(self, name: str) -> Optional[PortInfo]:
-        for port in self.get_module_ports():
-            if port.name == name:
-                return port
-        return None
-        
-    def find_parameter_by_name(self, name: str) -> Optional[ParameterInfo]:
-        for param in self.get_module_parameters():
-            if param.name == name:
-                return param
-        return None
-        
-    def get_port_count(self) -> Dict[str, int]:
-        ports = self.get_module_ports()
+        Returns:
+            Dict包含:
+            - name: 模块名
+            - parameters: 参数列表
+            - ports: 端口列表
+            - port_summary: 端口统计信息
+        """
         return {
+            "name": self.module_name,
+            "parameters": self.get_parameter_info(),
+            "ports": self.get_port_info(),
+            "port_summary": self._get_port_summary()
+        }
+    def _get_port_summary(self) -> Dict[str, int]:
+        ports = self.get_port_info()
+        summary = {
             "total": len(ports),
-            "input": len([p for p in ports if p.direction == PortDirection.INPUT.value]),
-            "output": len([p for p in ports if p.direction == PortDirection.OUTPUT.value]),
-            "inout": len([p for p in ports if p.direction == PortDirection.INOUT.value])
+            "input": 0,
+            "output": 0,
+            "inout": 0
         }
         
-    def has_parameters(self) -> bool:
-        return len(self.get_module_parameters()) > 0
+        for port in ports:
+            if port.direction:
+                direction = port.direction.lower()
+                if direction in summary:
+                    summary[direction] += 1
         
-    def is_body_ignored(self) -> bool:
-        info = self._get_module_info()
-        return info.body_ignored if info else True
-
-class ASTBuilder:
+        return summary
     
-    def __init__(self):
-        self.module_stack: List[ModuleDeclaration] = []  
-        self.pending_items: Dict[str, List] = {}  
-        self.current_parsing_module: Optional[str] = None 
-        self.port_registries: Dict[str, PortRegistry] = {}
-    
-    def _get_or_create_port_registry(self, module_name: str) -> PortRegistry:
-        if module_name not in self.port_registries:
-            self.port_registries[module_name] = PortRegistry()
-        return self.port_registries[module_name]
-    
-    def register_port_from_list(self, module_name: str, port_name: str, 
-                               direction: Optional[str] = None,
-                               net_type: Optional[str] = None,
-                               msb_expr: Optional[str] = None,
-                               lsb_expr: Optional[str] = None) -> PortInfo:
-        registry = self._get_or_create_port_registry(module_name)
-        
-        range_expr = None
-        if msb_expr is not None and lsb_expr is not None:
-            range_expr = ExpressionSimplifier.create_range_expression(msb_expr, lsb_expr)
-        
-        return registry.register_from_port_list(port_name, direction, net_type, range_expr)
-    
-    def register_port_from_body(self, module_name: str, port_name: str,
-                               direction: str, net_type: Optional[str] = None,
-                               msb_expr: Optional[str] = None,
-                               lsb_expr: Optional[str] = None) -> None:
-        registry = self._get_or_create_port_registry(module_name)
-        
-        range_expr = None
-        if msb_expr is not None and lsb_expr is not None:
-            range_expr = ExpressionSimplifier.create_range_expression(msb_expr, lsb_expr)
-        
-        registry.register_from_body(port_name, direction, net_type, range_expr)
-
-    def get_module_ports(self, module_name: str) -> List[PortInfo]:
-        if module_name in self.port_registries:
-            return self.port_registries[module_name].get_all_ports()
-        return []
-    
-    def validate_module_ports(self, module_name: str) -> List[str]:
-        if module_name in self.port_registries:
-            return self.port_registries[module_name].validate_ports()
-        return []
-
-    @property
-    def current_module(self) -> Optional[ModuleDeclaration]:
-        return self.module_stack[-1] if self.module_stack else None
-    
-    def push_module_context(self, module_name: str) -> None:
-        if not hasattr(self, 'pending_items') or self.pending_items is None:
-            self.pending_items = {}
-
-        self.pending_items[module_name] = []
-        self.current_parsing_module = module_name
-        
-    def update_port_declaration(self, port: PortDeclaration, 
-                              direction: str, net_type: str, 
-                              range_expr: Optional[RangeExpression] = None) -> None:
-        port.direction = direction
-        port.net_type = net_type
-        if range_expr:
-            port.range_expr = range_expr
-
-    def create_design_unit(self) -> DesignUnit:
-        return DesignUnit() 
-    
-    def create_module_declaration(self, name: str, **kwargs) -> ModuleDeclaration:
-        module = ModuleDeclaration(name, **kwargs)
-        self.module_stack.append(module)
-        
-        if name in self.pending_items:
-            self._process_pending_items(module, name)
-            
-        return module
-
-    def pop_module_context(self) -> Optional[ModuleDeclaration]:
-        if self.module_stack:
-            module = self.module_stack.pop()
-            return module
-        return None
-    
-    def add_parameter_to_current_or_pending(self, param: ParameterDeclaration) -> None:
-        
-        if self.current_module:
-            self.add_parameter(self.current_module, param)
-        
-        elif self.current_parsing_module in self.pending_items:
-            self.pending_items[self.current_parsing_module].append(('parameter', param))
-        
-        else:
-            raise ValueError(f"No valid context for parameter '{param.identifier}'")
-    
-    def _process_pending_items(self, module: ModuleDeclaration, module_name: str) -> None:
-        pending_list = self.pending_items.get(module_name, [])
-        for item_type, item in pending_list:
-            if item_type == 'parameter':
-                self.add_parameter(module, item)
-        
-        if module_name in self.pending_items:
-            del self.pending_items[module_name]
-
-    def merge_port_declarations(self, module: ModuleDeclaration,port_declarations: List[Dict]) -> None:
-        port_map = {port.identifier: port for port in module.ports}
-        
-        for port_decl in port_declarations:
-            port_name = port_decl['name']
-            if port_name in port_map:
-                port = port_map[port_name]
-                self.update_port_declaration(
-                    port, 
-                    port_decl['direction'], 
-                    port_decl['net_type'],
-                    port_decl.get('range_expr')
-                )
-        
-    def create_parameter(self, identifier: str, parameter_type: str = "parameter", 
-                        default_value: str = "", data_type: Optional[str] = None, 
-                        **kwargs) -> ParameterDeclaration:
-        default_expr = StringLiteral(default_value) if default_value else None
-        return ParameterDeclaration(
-            identifier=identifier,
-            parameter_type=parameter_type,
-            default_value=default_expr,
-            data_type=data_type,
-            **kwargs
-        )
-        
-    def create_port(self, identifier: str, direction: str, net_type: str = "wire",msb_expr: Optional[str] = None, lsb_expr: Optional[str] = None,
-                   **kwargs) -> PortDeclaration:
-        range_expr = None
-        if msb_expr is not None and lsb_expr is not None:
-            range_expr = ExpressionSimplifier.create_range_expression(msb_expr, lsb_expr)
-        return PortDeclaration(
-            identifier=identifier,
-            direction=direction,
-            net_type=net_type,
-            range_expr=range_expr,
-            **kwargs
-        )
-        
-    def add_parameter(self, module: ModuleDeclaration, 
-                     param: ParameterDeclaration) -> None:
-        module.add_parameter(param)
-        
-    def add_port(self, module: ModuleDeclaration, 
-                port: PortDeclaration) -> None:
-        module.add_port(port)
-        
-    def set_body_ignored(self, module: ModuleDeclaration) -> None:
-        module.body_placeholder = True
-        
-    def create_error_node(self, error_message: str, 
-                         recovery_point: str = "", **kwargs) -> ErrorNode:
-        return ErrorNode(error_message, recovery_point, **kwargs)
+    def __repr__(self) -> str:
+        """字符串表示"""
+        return (f"VerilogAST(module={self.module_name}, "
+                f"params={len(self.get_parameter_info())}, "
+                f"ports={len(self.get_port_info())})")
 
 class VerilogASTError(Exception):
+    """Verilog AST异常基类"""
     pass
 
-
-class NodeNotFoundError(VerilogASTError):
+class PortNotFoundError(VerilogASTError):
+    """端口未找到异常"""
     pass
 
-
-class InvalidNodeTypeError(VerilogASTError):
+class ParameterNotFoundError(VerilogASTError):
+    """参数未找到异常"""
     pass
 
-def create_sample_ast() -> VerilogAST:
-    builder = ASTBuilder()
-    
-    design_unit = builder.create_design_unit()
-    
-    module = builder.create_module_declaration("test_module")
-    
-    width_param = builder.create_parameter("WIDTH", "parameter", "8")
-    depth_param = builder.create_parameter("DEPTH", "parameter", "16")
-    builder.add_parameter(module, width_param)
-    builder.add_parameter(module, depth_param)
-    
-    clk_port = builder.create_port("clk", "input", "wire")
-    rst_port = builder.create_port("rst_n", "input", "wire")
-    data_in_port = builder.create_port("data_in", "input", "wire", "WIDTH-1", "0")
-    data_out_port = builder.create_port("data_out", "output", "reg", "3", "0")
-    valid_port = builder.create_port("valid", "output", "wire")
-    
-    builder.add_port(module, clk_port)
-    builder.add_port(module, rst_port)
-    builder.add_port(module, data_in_port)
-    builder.add_port(module, data_out_port)
-    builder.add_port(module, valid_port)
-    
-    builder.set_body_ignored(module)
-    
-    design_unit.add_module(module)
-    
-    return VerilogAST(design_unit)
-
-
-if __name__ == "__main__":
-    ast = create_sample_ast()
-    
-    print(f"module name : {ast.get_module_name()}")
-    print(f"Ports counts: {ast.get_port_count()}")
-    print(f"Has parameter: {ast.has_parameters()}")
-    print(f"body is ignore: {ast.is_body_ignored()}")
-    
-    print("\n=== All ports ===")
-    for port in ast.get_module_ports():
-        width_info = f"[{port.width}]" if port.is_vector else ""
-        print(f"{port.direction} {port.net_type} {width_info} {port.name}")
-    
-    print("\n=== All Parameters ===")
-    for param in ast.get_module_parameters():
-        print(f"{param.param_type} {param.name} = {param.default_value}")
-    
-    clk_port = ast.find_port_by_name("clk")
-    if clk_port:
-        print(f"\nclk ports: {clk_port.name} ({clk_port.direction})")
-    
-    width_param = ast.find_parameter_by_name("WIDTH")
-    if width_param:
-        print(f"find width: {width_param.name} = {width_param.default_value}")
-    
