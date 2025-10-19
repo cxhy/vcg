@@ -139,7 +139,7 @@ class PortInfo:
             return PortType.INTERFACE
         elif self.array_dims:
             return PortType.ARRAY_3D if len(self.array_dims) >= 3 else PortType.ARRAY_2D
-        elif self.msb_expr is not None and self.lsb_expr is not None:
+        elif self.msb_expr and self.lsb_expr:
             return PortType.VECTOR
         else:
             return PortType.SIMPLE

@@ -33,13 +33,20 @@ class VerilogPreprocess:
     def _parse_macros(self, macros: Union[Dict[str, str], List[str], List[Tuple[str, str]], None]) -> Dict[str, str]:
         if macros is None:
             return {}
-        
+
         if isinstance(macros, dict):
-            return macros.copy()
-        
+            result = {}
+            for key, value in macros.items():
+                if not isinstance(key, str):
+                    raise ValueError(f"Macro key must be string, got {type(key).__name__}: {key}")
+                if not isinstance(value, str):
+                    raise ValueError(f"Macro value must be string, got {type(value).__name__}: {value}")
+                result[key] = value
+            return result
+
         if isinstance(macros, list):
             result = {}
-            
+
             for item in macros:
                 if isinstance(item, str):
                     result[item] = '1'
@@ -48,13 +55,13 @@ class VerilogPreprocess:
                     if isinstance(macro_name, str) and isinstance(macro_value, str):
                         result[macro_name] = macro_value
                     else:
-                        raise ValueError(f"macros key and value must be : {item}")
+                        raise ValueError(f"Macros key and value must be string, got: {item}")
                 else:
-                    raise ValueError(f"Unknow type Macros define: {item}")
-            
+                    raise ValueError(f"Unknown type in macros list: {type(item).__name__}")
+
             return result
-        
-        raise ValueError(f"Unsupported Macros Define: {type(macros)}")
+
+        raise ValueError(f"Unsupported macros type: {type(macros).__name__}, expected dict, list, or None")
     
     def read_file(self, file_path: str) -> str:
         if not os.path.exists(file_path):
@@ -96,6 +103,10 @@ class VerilogPreprocess:
             if re.match(r'\s*module\s+\w+', stripped_line):
                 in_module = True
                 result_lines.append(line)
+                if ';' in line:
+                    module_decl_complete = True
+                #if ';' in stripped_line:
+                #    module_decl_complete = True
                 continue
             
             if not in_module:
@@ -141,10 +152,10 @@ class VerilogPreprocess:
             return False
 
         declaration_keywords = [
-            r'^\s*input\s+',
-            r'^\s*output\s+', 
-            r'^\s*inout\s+',
-            r'^\s*parameter\s+'
+            r'^\s*input\b',    
+            r'^\s*output\b', 
+            r'^\s*inout\b',
+            r'^\s*parameter\b'
         ]
 
         for pattern in declaration_keywords:
@@ -253,10 +264,10 @@ class VerilogPreprocess:
         try:
             content = self.read_file(file_path)
             content = self.remove_pre_module_content(content)
-            module_decl, endmodule = self.extract_module_ports_section(content)
-            processed_ports = self.process_conditional_compilation(module_decl)
-            
-            result = processed_ports + '\n' + endmodule
+            processed_content = self.process_conditional_compilation(content)
+            module_decl, endmodule = self.extract_module_ports_section(processed_content)
+
+            result = module_decl + '\n' + endmodule
             return result
         except Exception as e:
             raise RuntimeError(f"Preprocess Failed: {str(e)}")
@@ -264,17 +275,19 @@ class VerilogPreprocess:
     def preprocess_string(self, verilog_code: str) -> str:
         try:
             content = self.remove_pre_module_content(verilog_code)
-            module_decl, endmodule = self.extract_module_ports_section(content)
-            processed_ports = self.process_conditional_compilation(module_decl)
-            
-            result = processed_ports + '\n' + endmodule
+            processed_content = self.process_conditional_compilation(content)
+            module_decl, endmodule = self.extract_module_ports_section(processed_content)
+
+            result = module_decl + '\n' + endmodule
             return result
         except Exception as e:
             raise RuntimeError(f"Preprocess Failed: {str(e)}")
     
-    def update_macros(self, new_macros: Union[Dict[str, str], List[str], List[Tuple[str, str]]]):
-        parsed_macros = self._parse_macros(new_macros)
-        self.macros.update(parsed_macros)
+    #def update_macros(self, new_macros: Union[Dict[str, str], List[str], List[Tuple[str, str]]]):
+    #    if new_macros is None:
+    #        return
+    #    parsed_macros = self._parse_macros(new_macros)
+    #    self.macros.update(parsed_macros)
     
     def clear_macros(self):
         self.macros.clear()
