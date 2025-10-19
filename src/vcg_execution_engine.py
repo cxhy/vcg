@@ -21,6 +21,8 @@ along with VCG.  If not, see <https://www.gnu.org/licenses/>.
 # Author: cxhy
 # Created: 2025-07-31
 # Description: 
+import os
+from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from vcg_rule_manager import VCGRuleManager
 from vcg_instance_manager import InstanceManager
@@ -63,6 +65,13 @@ class VCGExecutionEngine:
         self.wires_manager = WiresManager(self.rule_manager, macros=macros)
         self.instance_manager = InstanceManager(self.rule_manager, macros=macros)
         self.logger = get_vcg_logger('ExecutionEngine')
+
+    def expand_path(self, path_str: str) -> str:
+        expanded_path = os.path.expandvars(path_str.strip())
+        expanded_path = os.path.expanduser(expanded_path)
+        abs_path = str(Path(expanded_path).resolve())
+        return abs_path
+
     def execute(self, python_code: str) -> str:
         try:
             self.logger.debug("Starting Python code execution")
@@ -94,6 +103,7 @@ class VCGExecutionEngine:
     
     def _create_instance_func(self):
         def Instance(file_path: str, module_name: str, instance_name: str):
+            file_path = self.expand_path(file_path)
             instance_code = self.instance_manager.generate_instance(
                 file_path, module_name, instance_name
             )
@@ -106,6 +116,7 @@ class VCGExecutionEngine:
     
     def _create_wires_def_func(self):
         def WiresDef(file_path: str, module_name: str, port_type: Optional[str] = None, pattern: str = 'greedy'):
+            file_path = self.expand_path(file_path)
             wire_code = self.wires_manager.generate_wires_def(
                 file_path, module_name, port_type, pattern
             )

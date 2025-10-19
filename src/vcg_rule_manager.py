@@ -23,7 +23,7 @@ along with VCG.  If not, see <https://www.gnu.org/licenses/>.
 # Description: 
 import re
 from typing import List, Dict, Optional, Tuple, Any
-from VerilogAst import PortInfo
+from VerilogAst import PortInfo, PortType
 from vcg_logger import get_vcg_logger
 
 class VCGRuleManager:
@@ -46,17 +46,19 @@ class VCGRuleManager:
             'rstrip': str.rstrip,
         }
     
-    def add_signal_rule(self, source_pattern: str, target_pattern: str, port_type: Optional[str] = None):
-        self.logger.debug(f"Adding signal rule: source='{source_pattern}', target='{target_pattern}', port_type='{port_type}'")
+    def add_signal_rule(self, source_pattern: str, target_pattern: str, port_direction: Optional[str] = None):
+        self.logger.debug(f"Adding signal rule: source='{source_pattern}', "
+                         f"target='{target_pattern}', port_direction='{port_direction}'")
         processed_target, comments = self._extract_inline_comments(target_pattern)
-        self.logger.debug(f"Processed target pattern: '{processed_target}', extracted {len(comments)} comments")
+        self.logger.debug(f"Processed target pattern: '{processed_target}', "
+                         f"extracted {len(comments)} comments")
         
         rule = {
             'type': 'signal',
             'source': source_pattern,
             'target': processed_target,
             'comments': comments,
-            'port_type': port_type.lower() if port_type else None,
+            'port_direction': port_direction.lower() if port_direction else None,
             'priority': len(self.rules['signal_rules'])
         }
         
@@ -110,17 +112,22 @@ class VCGRuleManager:
     def resolve_signal_connection(self, port: PortInfo) -> str:
         signal_name = port.name
         rules = self.rules['signal_rules']
-        self.logger.debug(f"Resolving signal connection for port: '{signal_name}', port_type: {getattr(port, 'direction', 'unknown')}")
+        port_dir = port.direction if port.direction else 'unknown'
+        self.logger.debug(f"Resolving signal connection for port: '{signal_name}', "
+                         f"direction: {port_dir}, port_type: {port.port_type.value}")
         self.logger.debug(f"Available signal rules: {len(rules)}")
 
         for rule_index, rule in enumerate(reversed(rules)):
             rule_num = len(rules) - 1 - rule_index
-            self.logger.debug(f"Checking signal rule #{rule_num}: source='{rule['source']}', target='{rule['target']}', port_type='{rule['port_type']}'")
+            self.logger.debug(f"Checking signal rule #{rule_num}: "
+                             f"source='{rule['source']}', target='{rule['target']}', "
+                             f"port_direction='{rule['port_direction']}'")
 
-            if rule['port_type'] is not None:
-                port_type_match = self._check_port_type_match(port, rule['port_type'])
-                self.logger.debug(f"Port type check: required='{rule['port_type']}', port_direction='{getattr(port, 'direction', 'none')}', match={port_type_match}")
-                if not self._check_port_type_match(port, rule['port_type']):
+            if rule['port_direction'] is not None:
+                direction_match = self._check_port_direction_match(port, rule['port_direction'])
+                self.logger.debug(f"Direction check: required='{rule['port_direction']}', "
+                                f"port_direction='{port_dir}', match={direction_match}")
+                if not direction_match:
                     continue
 
             pattern_match = self._match_pattern(signal_name, rule['source'])
@@ -145,6 +152,20 @@ class VCGRuleManager:
 
         return signal_name
 
+    def _check_port_direction_match(self, port: PortInfo, required_direction: str) -> bool:
+        self.logger.debug(f"Checking port direction match: required='{required_direction}'")
+
+        if port.direction is None:
+            self.logger.debug("Port has no direction, skipping direction check (allowing match)")
+            return True
+        
+        port_direction = port.direction.lower()
+        required_direction_lower = required_direction.lower()
+        match_result = port_direction == required_direction_lower
+        
+        self.logger.debug(f"Direction check: port_direction='{port_direction}', "
+                         f"required='{required_direction_lower}', match={match_result}")
+        return match_result
     
     def resolve_param_connection(self, param_name: str) -> Optional[str]:
         rules = self.rules['param_rules']
@@ -169,6 +190,11 @@ class VCGRuleManager:
 
         self.logger.debug(f"Resolving wire generation for port: '{port_name}', pattern: '{pattern}'")
         self.logger.debug(f"Available wire rules: {len(rules)}")
+
+        if not self._should_generate_wire_for_port(port):
+            self.logger.debug(f"Port '{port_name}' should not generate wire "
+                            f"(port_type: {port.port_type.value})")
+            return "", None, None, False
 
         for rule_index, rule in enumerate(reversed(rules)):
             rule_num = len(rules) - 1 - rule_index
@@ -224,8 +250,10 @@ class VCGRuleManager:
         return value
     
 
-    def _apply_pattern_substitution(self, input_name: str, source_pattern: str, target_pattern: str) -> str:
-        self.logger.debug(f"Applying pattern substitution: input='{input_name}', source='{source_pattern}', target='{target_pattern}'")
+    def _apply_pattern_substitution(self, input_name: str, source_pattern: str, 
+                                   target_pattern: str) -> str:
+        self.logger.debug(f"Applying pattern substitution: input='{input_name}', "
+                         f"source='{source_pattern}', target='{target_pattern}'")
         if '*' not in source_pattern:
             self.logger.debug("Source pattern has no wildcards, returning target pattern as-is")
             return target_pattern
@@ -252,12 +280,6 @@ class VCGRuleManager:
                            lambda m: self._execute_function_call(m.group(1), groups), 
                            result)
             self.logger.debug(f"After function processing: '{result}'")
-
-
-#        function_pattern = r'\$\{([^}]+)\}'
-#        result = re.sub(function_pattern, 
-#                       lambda m: self._execute_function_call(m.group(1), groups), 
-#                       result)
         
         for i, group in enumerate(groups):
             old_result = result
@@ -344,65 +366,36 @@ class VCGRuleManager:
             self.logger.warning(f"Function call execution failed: '{function_call}', error: {e}, using fallback: '{fallback}'")
             return fallback
     
-    def _check_port_type_match(self, port: PortInfo, required_type: str) -> bool:
-        self.logger.debug(f"Checking port type match: required='{required_type}'")
-
-        if not hasattr(port, 'direction'):
-            self.logger.debug("Port has no direction attribute, skipping type check (allowing match)")
-            return True
-        
-        port_direction = port.direction.lower()
-        required_type_lower = required_type.lower()
-        match_result = port_direction == required_type_lower
-        
-        self.logger.debug(f"Port type check: port_direction='{port_direction}', required='{required_type_lower}', match={match_result}")
-        return match_result
-    
-    def _generate_width_literal(self, port: PortInfo, value: str) -> str:
-        self.logger.debug(f"Generating width literal for value '{value}', port: '{port.name}'")
-
-        if not hasattr(port, 'width') or not port.width:
-            result = f"1'b{value}"
-            self.logger.debug(f"Port has no width, using default: '{result}'")
-            return result
-        
+    def _generate_width_literal(self, port: PortInfo, value: str) -> str:        
         width = port.width
-        self.logger.debug(f"Port width: {width} (type: {type(width)})")
+
+        if not width or width == 1:
+            return f"1'b{value}"
         
-        if isinstance(width, int):
-            self.logger.debug(f"Width is integer: {width}")
-            if width <= 1:
-                result = f"1'b{value}"
-                self.logger.debug(f"Width <= 1, result: '{result}'")
-                return result
-            else:
-                result = f"{width}'b{value * width}"
-                self.logger.debug(f"Width > 1, result: '{result}'")
-                return result
-        
-        width_str = str(width).strip()
-        self.logger.debug(f"Width as string: '{width_str}'")
-        
-        if width_str.isdigit():
-            width_num = int(width_str)
-            self.logger.debug(f"Width string is digit: {width_num}")
-            if width_num <= 1:
-                result = f"1'b{value}"
-                self.logger.debug(f"Width <= 1, result: '{result}'")
-                return result
-            else:
-                result = f"{width_num}'b{value * width_num}"
-                self.logger.debug(f"Width > 1, result: '{result}'")
-                return result
-        
-        if any(char in width_str for char in ['+', '-', '*', '/', '(', ')']):
-            result = f"{{({width_str}){{1'b{value}}}}}"
-            self.logger.debug(f"Expression width format: '{result}'")
+        w_int = width if isinstance(width, int) else (int(width) if isinstance(width, str) and width.isdigit() else None)
+
+        if w_int and w_int <= 8:
+            result = f"{w_int}'b{value * w_int}"
+            self.logger.debug(f"Port '{port.name}' width={w_int} <= 8, using bit string: '{result}'")
             return result
-        else:
-            result = f"{{{width_str}{{1'b{value}}}}}"
-            self.logger.debug(f"Parameter width format: '{result}'")
+        
+        if w_int:
+            result = f"{{{w_int}{{1'b{value}}}}}"
+            self.logger.debug(f"Port '{port.name}' width={w_int} > 8, using replication: '{result}'")
             return result
+        
+        w_str = str(width)
+        needs_paren = any(op in w_str for op in ['+', '-', '*', '/'])
+        result = f"{{({w_str}){{1'b{value}}}}}" if needs_paren else f"{{{w_str}{{1'b{value}}}}}"
+        self.logger.debug(f"Port '{port.name}' expression width='{w_str}', result: '{result}'")
+        return result
+    
+    def _should_generate_wire_for_port(self, port: PortInfo) -> bool:
+        if port.port_type == PortType.INTERFACE:
+            self.logger.debug(f"Port '{port.name}' is interface type "
+                            f"({port.interface_type}), no wire should be generated")
+            return False
+        return True
     
     def get_rules_summary(self) -> Dict[str, int]:
         return {

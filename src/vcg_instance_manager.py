@@ -23,8 +23,8 @@ along with VCG.  If not, see <https://www.gnu.org/licenses/>.
 # Description: 
 import re
 from typing import List, Dict, Optional, Tuple
-from VerilogParser import parse_verilog_file
-from VerilogAst import PortInfo, ParameterInfo
+from VerilogParser import VerilogParser
+from VerilogAst import PortInfo, ParameterInfo, PortType
 from vcg_rule_manager import VCGRuleManager
 from vcg_exceptions import VCGRuntimeError, VCGSyntaxError, VCGFileError, VCGParseError
 from vcg_logger import get_vcg_logger
@@ -36,6 +36,7 @@ class InstanceManager:
         self.macros = macros
         self.logger = get_vcg_logger('InstanceManager')
         self._ALIGN = 18
+        self.parser = VerilogParser(macros=self.macros, debug=False)
     
     def generate_instance(self, file_path: str, module_name: str, instance_name: str) -> str:
         try:
@@ -43,8 +44,8 @@ class InstanceManager:
             
             ast = self._parse_verilog_file(file_path)
             
-            ports = ast.get_module_ports()
-            parameters = ast.get_module_parameters()
+            ports = ast.get_port_info()
+            parameters = ast.get_parameter_info()
             
             self.logger.debug(f"Found {len(ports)} ports and {len(parameters)} parameters")
             
@@ -76,7 +77,7 @@ class InstanceManager:
     
     def _parse_verilog_file(self, file_path: str):
         self.logger.debug(f"Parsing Verilog file: {file_path}")
-        ast = parse_verilog_file(file_path, macros=self.macros)
+        ast = self.parser.parse_file(file_path)
         if not ast:
             raise VCGParseError(f"Cannot Parse Verilog File: {file_path}")
         return ast
@@ -157,54 +158,30 @@ class InstanceManager:
                 comment = self._generate_port_comment(port_infos[port_name])
                 if comment:
                     base_line = f"    {connection_part:<{self._ALIGN * 2}}{comment}"
-            
             port_lines.append(base_line)
         
         return port_lines
     
     def _generate_port_comment(self, port: PortInfo) -> str:
-        if not hasattr(port, 'direction'):
-            return ""
-        direction = port.direction.lower()
-        comment_parts = [f"// {direction}"]
-        
-        if hasattr(port, 'width') and port.width:
-            width_str = self._format_port_width_comment(port.width)
-            if width_str:
-                comment_parts.append(width_str)
-        
-        return " ".join(comment_parts)
-    
-    def _format_port_width_comment(self, width) -> str:
-        if not width:
-            return ""
-        
-        if isinstance(width, int):
-            return "" if width <= 1 else f"[{width-1}:0]"
-        
-        width_str = str(width).strip()
-        if not width_str:
-            return ""
-        
-        if width_str.isdigit():
-            width_num = int(width_str)
-            return "" if width_num <= 1 else f"[{width_num-1}:0]"
-        
-        plus_one_pattern = r'^(.+?)\s*\+\s*1$'
-        match = re.match(plus_one_pattern, width_str)
-        if match:
-            base_expr = match.group(1).strip()
-            if base_expr.startswith('$') and '(' in base_expr:
-                return f"[{base_expr}:0]"
-            elif any(op in base_expr for op in ['+', '-', '*', '/', ' ']):
-                return f"[({base_expr}):0]"
-            else:
-                return f"[{base_expr}:0]"
+        comment_parts = []
+
+        if port.direction:
+            comment_parts.append(f"// {port.direction}")
         else:
-            if any(op in width_str for op in ['+', '-', '*', '/', '(', ')']):
-                return f"[({width_str})-1:0]"
-            else:
-                return f"[{width_str}-1:0]"
+            return ""
+
+        if port.net_type and port.net_type.lower() != 'wire':
+            comment_parts.append(port.net_type)
+
+        if port.range_string:
+            comment_parts.append(port.range_string)
+
+        if port.port_type == PortType.INTERFACE:
+            comment_parts.append(f"<{port.interface_type}>")
+        elif port.port_type in [PortType.ARRAY_2D, PortType.ARRAY_3D]:
+            comment_parts.append("[ARRAY]")
+
+        return " ".join(comment_parts)
     
     def set_alignment(self, align: int):
         self._ALIGN = align

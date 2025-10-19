@@ -24,8 +24,8 @@ along with VCG.  If not, see <https://www.gnu.org/licenses/>.
 import re
 from typing import List, Dict, Optional, Tuple
 from pathlib import Path
-from VerilogParser import parse_verilog_file
-from VerilogAst import PortInfo, ParameterInfo
+from VerilogParser import VerilogParser
+from VerilogAst import PortInfo, ParameterInfo, PortType
 from vcg_rule_manager import VCGRuleManager
 from vcg_exceptions import VCGRuntimeError, VCGSyntaxError, VCGFileError, VCGParseError
 from vcg_logger import get_vcg_logger
@@ -37,18 +37,21 @@ class WiresManager:
         self.macros = macros
         self.logger = get_vcg_logger('WiresManager')
         self._BASE_SPACING = 15
+        self.parser = VerilogParser(macros=self.macros, debug=False)
     
     def generate_wires_def(self, file_path: str, module_name: str,
-                          port_type: Optional[str] = None, pattern: str = 'greedy') -> str:
+                          port_direction: Optional[str] = None, 
+                          pattern: str = 'greedy') -> str:
         try:
             if pattern not in ['lazy', 'greedy']:
                 raise ValueError(f"Invalid pattern: {pattern}. Must be 'lazy' or 'greedy'")
 
-            self.logger.debug(f"Generating wire definitions from {file_path} for module '{module_name}' (type: {port_type or 'all'}, pattern: {pattern})")
+            self.logger.debug(f"Generating wire definitions from {file_path} for module '{module_name}' "
+                            f"(direction: {port_direction or 'all'}, pattern: {pattern})")
             
             ast = self._parse_verilog_file(file_path)
             
-            ports = self._get_ports_by_type(ast, port_type)
+            ports = self._get_ports_by_direction(ast, port_direction)
             self.logger.debug(f"Found {len(ports)} ports to process")
 
             wire_declarations = []
@@ -77,27 +80,32 @@ class WiresManager:
     
     def _parse_verilog_file(self, file_path: str):
         self.logger.debug(f"Parsing Verilog file: {file_path}")
-        ast = parse_verilog_file(file_path, macros=self.macros)
+        ast = self.parser.parse_file(file_path)
         if not ast:
+            if self.parser.parse_errors:
+                error_msg = "; ".join(self.parser.parse_errors)
+                raise VCGParseError(f"Parse errors in {file_path}: {error_msg}")
             raise VCGParseError(f"Cannot Parser Verilog file: {file_path}")
         return ast
     
-    def _get_ports_by_type(self, ast, port_type: Optional[str]) -> List[PortInfo]:
-        if port_type is None:
-            self.logger.debug("Retrieved all module ports")
-            return ast.get_module_ports()
-        elif port_type.lower() == 'input':
-            self.logger.debug("Retrieved input ports only")
-            return ast.get_input_ports()
-        elif port_type.lower() == 'output':
-            self.logger.debug("Retrieved output ports only")
-            return ast.get_output_ports()
-        elif port_type.lower() == 'inout':
-            self.logger.debug("Retrieved inout ports only")
-            return ast.get_inout_ports()
-        else:
-            self.logger.error(f"Invalid port type: {port_type}")
-            raise ValueError(f"Unsupport port type: {port_type}")
+    def _get_ports_by_direction(self, ast, port_direction: Optional[str]) -> List[PortInfo]:
+        all_ports = ast.get_port_info()
+        
+        if port_direction is None:
+            self.logger.debug(f"Retrieved all {len(all_ports)} module ports")
+            return all_ports
+        
+        direction_lower = port_direction.lower()
+        if direction_lower not in ['input', 'output', 'inout']:
+            self.logger.error(f"Invalid port direction: {port_direction}")
+            raise ValueError(f"Unsupported port direction: {port_direction}")
+        
+        filtered_ports = [p for p in all_ports if p.direction and p.direction.lower() == direction_lower]
+        
+        self.logger.debug(f"Retrieved {len(filtered_ports)} {direction_lower} ports "
+                         f"(out of {len(all_ports)} total)")
+        
+        return filtered_ports
     
     def _generate_single_wire(self, port: PortInfo, pattern: str = 'greedy') -> str:
         port_name = port.name
@@ -125,7 +133,7 @@ class WiresManager:
         width_str = ""
         if width:
             width_str = self._format_wire_width(width)
-        elif hasattr(port, 'width') and port.width and port.width != '1':
+        elif port.range_string:
             width_str = self._format_wire_width(port.width)
 
         if width_str:
@@ -135,8 +143,7 @@ class WiresManager:
             if prefix_length >= self._BASE_SPACING:
                 spacing = " "
             else:
-                needed_spaces = self._BASE_SPACING - prefix_length
-                spacing = " " * needed_spaces
+                spacing = " " * (self._BASE_SPACING - prefix_length)
         else:
             prefix = "wire"
             spacing = " " * (self._BASE_SPACING - len("wire"))
@@ -158,27 +165,36 @@ class WiresManager:
         width_str = str(width_input).strip()
         if not width_str:
             return ""
+        
+        if self._is_multi_dimensional(width_str):
+            self.logger.debug(f"Multi-dimensional array: {width_str}")
+            return width_str
+        
+        if width_str.startswith('[') and width_str.endswith(']') and width_str.count('[') == 1:
+            return width_str
 
         if width_str.isdigit():
             width_num = int(width_str)
             return "" if width_num <= 1 else f"[{width_num-1}:0]"
-
-        plus_one_pattern = r'^(.+?)\s*\+\s*1$'
-        match = re.match(plus_one_pattern, width_str)
-        if match:
-            base_expr = match.group(1).strip()
-            if base_expr.startswith('$') and '(' in base_expr:
-                return f"[{base_expr}:0]"
-            elif any(op in base_expr for op in ['+', '-', '*', '/', ' ']):
-                return f"[({base_expr}):0]"
-            else:
-                return f"[{base_expr}:0]"
+        
+        if any(op in width_str for op in ['+', '-', '*', '/', '(', ')']):
+            return f"[({width_str})-1:0]"
         else:
-            if any(op in width_str for op in ['+', '-', '*', '/', '(', ')']):
-                return f"[({width_str})-1:0]"
-            else:
-                return f"[{width_str}-1:0]"
-    
+            return f"[{width_str}-1:0]"
+
+    def _is_multi_dimensional(self, width_str: str) -> bool:
+        if '[' not in width_str or ']' not in width_str:
+            return False
+
+        dimension_count = width_str.count(']')
+
+        if dimension_count >= 2:
+            if '][' in width_str:
+                self.logger.debug(f"Multi-dimensional array detected: {dimension_count} dimensions")
+                return True
+
+        return False    
+
     def set_base_spacing(self, spacing: int):
         self._BASE_SPACING = spacing
         self.logger.debug(f"Set base spacing to {spacing}")
