@@ -23,8 +23,8 @@ along with VCG.  If not, see <https://www.gnu.org/licenses/>.
 # Description: 
 import re
 from typing import List, Dict, Optional, Tuple, Any
-from VerilogAst import PortInfo, PortType
-from vcg_logger import get_vcg_logger
+from .VerilogAst import PortInfo, PortType
+from .vcg_logger import get_vcg_logger
 
 class VCGRuleManager:
     
