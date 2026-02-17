@@ -38,11 +38,6 @@ module dma_system (
 // WiresDef("dma_channel.v", "dma_channel", "input", "lazy")
 //VCG_END
 //VCG_GEN_BEGIN_0
-wire [ADDR_WIDTH-1:0] w_src_addr;
-wire [ADDR_WIDTH-1:0] w_dst_addr;
-wire [DATA_WIDTH-1:0] w_src_read_data;
-wire           w_src_read_rdy;
-wire           w_dst_write_rdy;
 //VCG_GEN_END_0
 
 //VCG_BEGIN
@@ -86,24 +81,6 @@ dma_channel #(
     .DATA_WIDTH        (64),
     .FIFO_DEPTH        (16)
 ) u_dma_ch0 (
-    .clk               (sys_clk),       // input
-    .rst_n             (sys_rst_n),     // input
-    .src_addr          (mem_ch0_ADDR),  // input [ADDR_WIDTH-1:0]
-    .dst_addr          (dst_addr),      // input [ADDR_WIDTH-1:0]
-    .transfer_length   (transfer_length),// input [15:0]
-    .start_transfer    (start_transfer),// input
-    .transfer_done     (dma_transfer_done[0]),// output
-    .transfer_error    (dma_transfer_error[0]),// output
-    .src_read_addr     (mem_ch0_READ_ADDR),// output [ADDR_WIDTH-1:0]
-    .src_read_data     (mem_ch0_READ_DATA),// input [DATA_WIDTH-1:0]
-    .src_read_valid    (mem_ch0_READ_VALID),// output
-    .src_read_ready    (mem_ch0_READ_READY),// input
-    .dst_write_addr    (mem_ch0_dst_addr),// output [ADDR_WIDTH-1:0]
-    .dst_write_data    (mem_ch0_wdata), // output [DATA_WIDTH-1:0]
-    .dst_write_valid   (dst_write_valid),// output
-    .dst_write_ready   (dst_write_ready),// input
-    .channel_busy      (dma_channel_busy[0]),// output
-    .bytes_transferred (bytes_transferred)// output [15:0]
 );
 
 dma_channel #(
@@ -112,24 +89,6 @@ dma_channel #(
     .DATA_WIDTH        (64),
     .FIFO_DEPTH        (16)
 ) u_dma_ch1 (
-    .clk               (sys_clk),       // input
-    .rst_n             (sys_rst_n),     // input
-    .src_addr          (mem_ch1_ADDR),  // input [ADDR_WIDTH-1:0]
-    .dst_addr          (dst_addr),      // input [ADDR_WIDTH-1:0]
-    .transfer_length   (transfer_length),// input [15:0]
-    .start_transfer    (start_transfer),// input
-    .transfer_done     (dma_transfer_done[1]),// output
-    .transfer_error    (dma_transfer_error[1]),// output
-    .src_read_addr     (mem_ch1_READ_ADDR),// output [ADDR_WIDTH-1:0]
-    .src_read_data     (mem_ch1_READ_DATA),// input [DATA_WIDTH-1:0]
-    .src_read_valid    (mem_ch1_READ_VALID),// output
-    .src_read_ready    (mem_ch1_READ_READY),// input
-    .dst_write_addr    (mem_ch1_dst_addr),// output [ADDR_WIDTH-1:0]
-    .dst_write_data    (mem_ch1_wdata), // output [DATA_WIDTH-1:0]
-    .dst_write_valid   (dst_write_valid),// output
-    .dst_write_ready   (dst_write_ready),// input
-    .channel_busy      (dma_channel_busy[1]),// output
-    .bytes_transferred (bytes_transferred)// output [15:0]
 );
 
 dma_channel #(
@@ -138,24 +97,6 @@ dma_channel #(
     .DATA_WIDTH        (64),
     .FIFO_DEPTH        (16)
 ) u_dma_ch2 (
-    .clk               (sys_clk),       // input
-    .rst_n             (sys_rst_n),     // input
-    .src_addr          (mem_ch2_ADDR),  // input [ADDR_WIDTH-1:0]
-    .dst_addr          (dst_addr),      // input [ADDR_WIDTH-1:0]
-    .transfer_length   (transfer_length),// input [15:0]
-    .start_transfer    (start_transfer),// input
-    .transfer_done     (dma_transfer_done[2]),// output
-    .transfer_error    (dma_transfer_error[2]),// output
-    .src_read_addr     (mem_ch2_READ_ADDR),// output [ADDR_WIDTH-1:0]
-    .src_read_data     (mem_ch2_READ_DATA),// input [DATA_WIDTH-1:0]
-    .src_read_valid    (mem_ch2_READ_VALID),// output
-    .src_read_ready    (mem_ch2_READ_READY),// input
-    .dst_write_addr    (mem_ch2_dst_addr),// output [ADDR_WIDTH-1:0]
-    .dst_write_data    (mem_ch2_wdata), // output [DATA_WIDTH-1:0]
-    .dst_write_valid   (dst_write_valid),// output
-    .dst_write_ready   (dst_write_ready),// input
-    .channel_busy      (dma_channel_busy[2]),// output
-    .bytes_transferred (bytes_transferred)// output [15:0]
 );
 
 dma_channel #(
@@ -164,24 +105,6 @@ dma_channel #(
     .DATA_WIDTH        (64),
     .FIFO_DEPTH        (16)
 ) u_dma_ch3 (
-    .clk               (sys_clk),       // input
-    .rst_n             (sys_rst_n),     // input
-    .src_addr          (mem_ch3_ADDR),  // input [ADDR_WIDTH-1:0]
-    .dst_addr          (dst_addr),      // input [ADDR_WIDTH-1:0]
-    .transfer_length   (transfer_length),// input [15:0]
-    .start_transfer    (start_transfer),// input
-    .transfer_done     (dma_transfer_done[3]),// output
-    .transfer_error    (dma_transfer_error[3]),// output
-    .src_read_addr     (mem_ch3_READ_ADDR),// output [ADDR_WIDTH-1:0]
-    .src_read_data     (mem_ch3_READ_DATA),// input [DATA_WIDTH-1:0]
-    .src_read_valid    (mem_ch3_READ_VALID),// output
-    .src_read_ready    (mem_ch3_READ_READY),// input
-    .dst_write_addr    (mem_ch3_dst_addr),// output [ADDR_WIDTH-1:0]
-    .dst_write_data    (mem_ch3_wdata), // output [DATA_WIDTH-1:0]
-    .dst_write_valid   (dst_write_valid),// output
-    .dst_write_ready   (dst_write_ready),// input
-    .channel_busy      (dma_channel_busy[3]),// output
-    .bytes_transferred (bytes_transferred)// output [15:0]
 );
 //VCG_GEN_END_1
 

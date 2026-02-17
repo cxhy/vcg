@@ -23,11 +23,11 @@ along with VCG.  If not, see <https://www.gnu.org/licenses/>.
 # Description: 
 import re
 from typing import List, Dict, Optional, Tuple
-from VerilogParser import VerilogParser
-from VerilogAst import PortInfo, ParameterInfo, PortType
-from vcg_rule_manager import VCGRuleManager
-from vcg_exceptions import VCGRuntimeError, VCGSyntaxError, VCGFileError, VCGParseError
-from vcg_logger import get_vcg_logger
+from .VerilogParser import VerilogParser
+from .VerilogAst import PortInfo, ParameterInfo, PortType
+from .vcg_rule_manager import VCGRuleManager
+from .vcg_exceptions import VCGRuntimeError, VCGSyntaxError, VCGFileError, VCGParseError
+from .vcg_logger import get_vcg_logger
 
 class InstanceManager:
     
