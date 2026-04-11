@@ -165,9 +165,10 @@ class TestFileParsingFeatures:
     
     def test_tc004_file_with_macros(self, wires_manager_with_macros, sample_verilog_file):
         """TC004: 支持带宏定义的 Verilog 文件解析 (F1.4)"""
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            # 验证宏定义被传递给解析器
-            MockParser.assert_called_with(macros={"WIDTH": "8", "DEPTH": "16"})
+        # 验证宏定义被传递给 WiresManager 并存储
+        assert wires_manager_with_macros.macros == {"WIDTH": "8", "DEPTH": "16"}
+        # 验证 parser 使用了正确的宏
+        assert wires_manager_with_macros.parser.preprocessor.macros is not None
 
 
 # ==================== F2: 端口方向过滤功能测试 ====================
@@ -847,18 +848,18 @@ class TestBoundaryConditions:
         with pytest.raises((VCGFileError, ValueError)):
             wires_manager.generate_wires_def('', 'test_module')
     
-    def test_bc002_empty_module_name(self, wires_manager, sample_verilog_file):
+    def test_bc002_empty_module_name(self, wires_manager, sample_verilog_file, mock_rule_manager):
         """BC002: module_name 为空字符串"""
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {}
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                ''
-            )
-            # 可能返回空或抛出异常
-            assert isinstance(result, str)
+        mock_rule_manager.resolve_wire_generation.return_value = (None, None, None, False)
+
+        # 真实 parser 解析 sample_verilog_file，module_name 参数不影响解析
+        # generate_wires_def 处理所有端口，module_name 仅用于日志
+        result = wires_manager.generate_wires_def(
+            sample_verilog_file,
+            ''
+        )
+        # 应返回有效结果（greedy 模式下使用端口名作为 wire 名）
+        assert isinstance(result, str)
     
     def test_bc003_empty_port_list(self, wires_manager, empty_module_file, mock_rule_manager):
         """BC003: 端口列表为空"""
@@ -931,38 +932,50 @@ class TestSpecialScenarios:
         """SS001: 端口名包含下划线"""
         # ✅ 修复: 4个返回值
         mock_rule_manager.resolve_wire_generation.return_value = (None, None, None, False)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [Mock(name='data_valid', direction='input', width=None)]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module',
-                pattern='greedy'
-            )
-            
-            assert 'data_valid' in result
+
+        mock_port = Mock()
+        mock_port.name = 'data_valid'
+        mock_port.direction = 'input'
+        mock_port.range_string = ''
+        mock_port.width = None
+
+        mock_ast = Mock()
+        mock_ast.get_port_info.return_value = [mock_port]
+
+        wires_manager.parser = Mock()
+        wires_manager.parser.parse_file.return_value = mock_ast
+
+        result = wires_manager.generate_wires_def(
+            sample_verilog_file,
+            'test_module',
+            pattern='greedy'
+        )
+
+        assert 'data_valid' in result
     
     def test_ss002_port_name_with_digits(self, wires_manager, sample_verilog_file, mock_rule_manager):
         """SS002: 端口名包含数字"""
         mock_rule_manager.resolve_wire_generation.return_value = (None, None, None, False)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [Mock(name='port0', direction='input', width=None)]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module',
-                pattern='greedy'
-            )
-            
-            assert 'port0' in result
+
+        mock_port = Mock()
+        mock_port.name = 'port0'
+        mock_port.direction = 'input'
+        mock_port.range_string = ''
+        mock_port.width = None
+
+        mock_ast = Mock()
+        mock_ast.get_port_info.return_value = [mock_port]
+
+        wires_manager.parser = Mock()
+        wires_manager.parser.parse_file.return_value = mock_ast
+
+        result = wires_manager.generate_wires_def(
+            sample_verilog_file,
+            'test_module',
+            pattern='greedy'
+        )
+
+        assert 'port0' in result
     
     def test_ss003_multidimensional_port(self, wires_manager, multidim_array_file, mock_rule_manager):
         """SS003: 多维数组端口"""

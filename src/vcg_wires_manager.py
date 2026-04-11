@@ -74,12 +74,18 @@ class WiresManager:
         except FileNotFoundError:
             self.logger.error(f"Verilog file not found: {file_path}")
             raise VCGFileError(f"Cannot found Verilog File: {file_path}")
+        except ValueError:
+            raise
+        except VCGParseError:
+            raise
         except Exception as e:
             self.logger.error(f"Wire generation failed: {e}")
             raise VCGParseError(f"Generate Wire Error: {e}")
     
     def _parse_verilog_file(self, file_path: str):
         self.logger.debug(f"Parsing Verilog file: {file_path}")
+        if not file_path or not Path(file_path).exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
         ast = self.parser.parse_file(file_path)
         if not ast:
             if self.parser.parse_errors:
