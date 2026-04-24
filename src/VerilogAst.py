@@ -53,6 +53,10 @@ from enum import Enum
 import re
 from sympy import sympify, simplify
 
+from .vcg_logger import get_vcg_logger
+
+_logger = get_vcg_logger('VerilogAST.Calculator')
+
 class PortDirection(Enum):
     INPUT = "input"
     OUTPUT = "output" 
@@ -82,8 +86,12 @@ class ExpressionCalculator:
             processed, mapping = self._handle_dollar_funcs(expr)
             result = simplify(sympify(processed))
             return self._format_result(result, mapping)
-        except Exception:
-            return expr 
+        except Exception as e:
+            _logger.debug(
+                "sympy parse failed for expr=%r (type=%s): %s",
+                expr, type(e).__name__, e
+            )
+            return expr
     
     def _handle_dollar_funcs(self, expr: str) -> tuple[str, dict]:
         mapping = {}
