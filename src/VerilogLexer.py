@@ -236,11 +236,15 @@ class VerilogLexer:
     def t_STRING_LITERAL(self, t):
         r'"([^"\\]|\\.)*"'
  
-        t.value = t.value[1:-1] 
-        t.value = t.value.replace(r'\"', '"')
-        t.value = t.value.replace(r'\\', '\\')
-        t.value = t.value.replace(r'\n', '\n')
-        t.value = t.value.replace(r'\t', '\t')
+        t.value = t.value[1:-1]
+        # Protect escaped backslashes via sentinel so "\\n" stays literal "\n"
+        # (backslash + n) instead of being further interpreted as newline.
+        _sentinel = '\x00'
+        t.value = t.value.replace('\\\\', _sentinel)
+        t.value = t.value.replace('\\"', '"')
+        t.value = t.value.replace('\\n', '\n')
+        t.value = t.value.replace('\\t', '\t')
+        t.value = t.value.replace(_sentinel, '\\')
         return t
     
     def t_INTNUMBER_HEX(self, t):

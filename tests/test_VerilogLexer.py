@@ -329,6 +329,11 @@ class TestStringLiterals:
         ('"Tab\\there"', 'Tab\there'),
         ('"Quote: \\"text\\""', 'Quote: "text"'),
         ('"Backslash: \\\\"', 'Backslash: \\'),
+        # Regression (task 04): escaped backslash followed by n must remain
+        # literal "\n" (backslash+n), NOT be further interpreted as newline.
+        ('"a\\\\nb"', 'a\\nb'),
+        # Regression (task 04): pure `\\` -> single backslash.
+        ('"a\\\\b"', 'a\\b'),
     ])
     def test_string_literals(self, lexer, string_input, expected_value):
         """测试字符串字面量（包括转义字符）"""
