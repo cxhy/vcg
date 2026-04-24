@@ -70,11 +70,11 @@ class PortType(Enum):
     INTERFACE = "interface"    # 接口端口(预留)
 
 class ExpressionCalculator:
-    
+
     def __init__(self):
-        self.patterns = {
-            'token': re.compile(r'(\$[a-zA-Z_]\w*\([^)]*\)|\d+\.?\d*|\w+|[+\-*/()])')
-        }
+        # 显式保留空 __init__ 以维持 ExpressionCalculator() 无参实例化的外部行为。
+        pass
+
     def parse_width_expression(self, expr: str) -> Union[int, str, float]:
         if not expr or not expr.strip():
             return 0
@@ -194,7 +194,11 @@ class PortInfo:
         if self.port_type == PortType.VECTOR:
             return f"[{self.msb_expr}:{self.lsb_expr}]"
         elif self.array_dims:
-            base_range = f"[{self.msb_expr}:{self.lsb_expr}]" if self.msb_expr else ""
+            base_range = (
+                f"[{self.msb_expr}:{self.lsb_expr}]"
+                if self.msb_expr and self.lsb_expr
+                else ""
+            )
             array_range = "".join(f"[{dim}]" for dim in self.array_dims)
             return f"{base_range}{array_range}".strip()
         else:
@@ -341,6 +345,12 @@ class VerilogASTBuilder:
         return self
     
     def update_port(self, name: str, **kwargs) -> 'VerilogASTBuilder':
+        """等价于 add_port()。保留别名以支持 VerilogParser.py 等下游调用方。
+
+        Note:
+            该方法与 add_port 完全同义。PLY grammar rule 倾向用 update_*
+            命名强调"已存在端口的字段补全"语义，底层共用 add_port 实现。
+        """
         return self.add_port(name, **kwargs)
     
     def build(self) -> 'VerilogAST':
@@ -427,13 +437,5 @@ class VerilogAST:
 
 class VerilogASTError(Exception):
     """Verilog AST异常基类"""
-    pass
-
-class PortNotFoundError(VerilogASTError):
-    """端口未找到异常"""
-    pass
-
-class ParameterNotFoundError(VerilogASTError):
-    """参数未找到异常"""
     pass
 
