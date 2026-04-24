@@ -225,14 +225,19 @@ class ParameterManager:
     def add_parameter(self, param_name: str, **kwargs) -> None:
         if param_name not in self._parameters:
             self._parameter_order.append(param_name)
-        
+
         self._parameters[param_name] = ParameterInfo(
             name=param_name,
             param_type=kwargs.get('param_type', 'parameter'),
             default_value=kwargs.get('default_value', ''),
             data_type=kwargs.get('data_type')
         )
-    
+
+    def add_parameter_info(self, param_info: ParameterInfo) -> None:
+        if param_info.name not in self._parameters:
+            self._parameter_order.append(param_info.name)
+        self._parameters[param_info.name] = param_info
+
     def get_all_parameters(self) -> List[ParameterInfo]:
         return [self._parameters[name] for name in self._parameter_order]
 
@@ -303,9 +308,7 @@ class VerilogASTBuilder:
         ast = VerilogAST(self._module_name)
         
         for name in self._parameter_order:
-            param = self._parameters[name]
-            ast.parameter_manager._parameters[name] = param
-            ast.parameter_manager._parameter_order.append(name)
+            ast.parameter_manager.add_parameter_info(self._parameters[name])
         
         for name in self._port_order:
             decl = self._port_decls[name]
