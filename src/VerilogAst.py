@@ -179,15 +179,26 @@ class PortInfo:
     def _calculate_vector_width(self) -> Union[int, str, float]:
         if not self.msb_expr or not self.lsb_expr:
             return 1
-        
+
         msb_val = _calculator.parse_width_expression(self.msb_expr)
         lsb_val = _calculator.parse_width_expression(self.lsb_expr)
-        
+
         if isinstance(msb_val, int) and isinstance(lsb_val, int):
             return abs(msb_val - lsb_val) + 1
 
         width_expr = f"({msb_val})-({lsb_val})+1"
-        return _calculator.parse_width_expression(width_expr)
+        result = _calculator.parse_width_expression(width_expr)
+
+        # Narrow fallback：sympy 对部分 Verilog 参数名（如 N/O/S/Q，与 sympy
+        # 保留符号冲突）无法 sympify，会原样返回 width_expr 字符串。
+        # 仅在此时、且 lsb==0、msb 形如 "<name>-1"（允许空格）时，
+        # 回退到纯字符串化简：`X-1 : 0` → `X`。
+        if isinstance(result, str) and str(lsb_val) == "0":
+            m = re.fullmatch(r"\s*(.+?)\s*-\s*1\s*", str(self.msb_expr))
+            if m:
+                return m.group(1)
+
+        return result
     
     @property
     def range_string(self) -> str:
