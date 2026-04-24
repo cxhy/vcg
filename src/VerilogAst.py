@@ -48,7 +48,7 @@ along with VCG.  If not, see <https://www.gnu.org/licenses/>.
 #└─────────────────────────────────────────────────────────┘
 
 from typing import List, Optional, Any, Dict, Union
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, replace
 from enum import Enum
 import re
 from sympy import sympify, simplify
@@ -119,9 +119,15 @@ class ExpressionCalculator:
 
 _calculator = ExpressionCalculator()
 
-@dataclass
+@dataclass(frozen=True)
 class PortDeclaration:
-    """端口声明"""
+    """端口声明
+
+    Note:
+        frozen=True 禁止字段重新赋值。array_dims 字段保留 List[str] 以维持
+        对外签名与字面赋值语义，请不要 in-place mutate 该列表——
+        Builder 在 add_port 中使用 dataclasses.replace 创建新对象。
+    """
     name: str
     direction: Optional[str] = None
     net_type: Optional[str] = None
@@ -130,9 +136,14 @@ class PortDeclaration:
     array_dims: List[str] = field(default_factory=list)
     interface_type: Optional[str] = None
 
-@dataclass
+@dataclass(frozen=True)
 class PortInfo:
-    """端口信息"""
+    """端口信息
+
+    Note:
+        frozen=True 禁止字段重新赋值。array_dims 字段保留 List[str]；
+        外部不应 in-place mutate 该列表。
+    """
     name: str
     direction: Optional[str] = None
     net_type: Optional[str] = None
@@ -190,7 +201,7 @@ class PortInfo:
             return ""
 
 
-@dataclass
+@dataclass(frozen=True)
 class ParameterInfo:
     """参数信息"""
     name: str
@@ -295,12 +306,17 @@ class VerilogASTBuilder:
         if name not in self._port_decls:
             self._port_order.append(name)
             self._port_decls[name] = PortDeclaration(name=name)
-        
+
         decl = self._port_decls[name]
-        for key, value in kwargs.items():
-            if value is not None and hasattr(decl, key):
-                setattr(decl, key, value)
-        
+        allowed = {f.name for f in fields(decl)}
+        update = {
+            key: value
+            for key, value in kwargs.items()
+            if value is not None and key in allowed
+        }
+        if update:
+            self._port_decls[name] = replace(decl, **update)
+
         return self
     
     def update_port(self, name: str, **kwargs) -> 'VerilogASTBuilder':
