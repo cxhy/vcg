@@ -24,11 +24,11 @@ along with VCG.  If not, see <https://www.gnu.org/licenses/>.
 import os
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
-from vcg_rule_manager import VCGRuleManager
-from vcg_instance_manager import InstanceManager
-from vcg_wires_manager import WiresManager
-from vcg_exceptions import VCGRuntimeError, VCGSyntaxError, VCGFileError, VCGParseError
-from vcg_logger import get_vcg_logger
+from .vcg_rule_manager import VCGRuleManager
+from .vcg_instance_manager import InstanceManager
+from .vcg_wires_manager import WiresManager
+from .vcg_exceptions import VCGRuntimeError, VCGSyntaxError, VCGFileError, VCGParseError
+from .vcg_logger import get_vcg_logger
 
 class OrderedOutputManager:  
     def __init__(self):

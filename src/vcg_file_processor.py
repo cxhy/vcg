@@ -24,9 +24,9 @@ along with VCG.  If not, see <https://www.gnu.org/licenses/>.
 import re,os
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict
-from vcg_execution_engine import VCGExecutionEngine
-from vcg_exceptions import VCGFileError, VCGParseError
-from vcg_logger import get_vcg_logger, set_file_context, clear_file_context
+from .vcg_execution_engine import VCGExecutionEngine
+from .vcg_exceptions import VCGFileError, VCGParseError
+from .vcg_logger import get_vcg_logger, set_file_context, clear_file_context
 
 class VCGBlock:
     def __init__(self, code: str, start_line: int, end_line: int, block_id: int):
@@ -48,7 +48,8 @@ class VCGFileProcessor:
 
     def process_file(self, file_path: Path) -> None:
         original_dir = os.getcwd()
-        main_file_dir = file_path.parent.resolve()
+        file_path = file_path.resolve()
+        main_file_dir = file_path.parent
         try:
             self.logger.info(f"Switching to main file directiory: {main_file_dir}")
             os.chdir(str(main_file_dir))
