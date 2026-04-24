@@ -776,7 +776,6 @@ class TestCompleteScenarios:
 # ============================================================================
 # 测试类：输出格式验证
 # ============================================================================
-
 class TestOutputFormat:
     """测试输出格式规范"""
     
@@ -821,6 +820,86 @@ class TestOutputFormat:
         assert '.PARAM1' in result
         assert '.PARAM2' in result
         assert ') inst_name (' in result
+
+
+# ============================================================================
+# 测试类：端口计数日志回归（task 01）
+# ============================================================================
+
+class TestPortCountLogRegression:
+    """task 01 regression: log 中的 N 必须 = len(port_connections)，而非恒为 0。
+
+    Pre-fix：`sum(1 for line in lines if '.(' in line)` 子串永不匹配
+    `.port_name<space>(signal)` 格式，N 恒为 0。
+    Post-fix：直接使用 `len(port_connections)`。
+    """
+
+    def test_port_count_log_equals_connection_count(
+        self, mock_rule_manager, mock_verilog_parser, caplog
+    ):
+        """TC-REG-01: INFO 日志中的端口数必须等于实际 port 数（>0）"""
+        import logging
+        import re
+
+        ports = [
+            MockPortInfo('clk', 'input'),
+            MockPortInfo('rst_n', 'input'),
+            MockPortInfo('data_in', 'input', range_string='[7:0]'),
+            MockPortInfo('data_out', 'output', range_string='[7:0]'),
+        ]
+        mock_ast = MockAST(ports=ports, parameters=[])
+
+        mock_parser_instance = Mock()
+        mock_parser_instance.parse_file.return_value = mock_ast
+        mock_verilog_parser.return_value = mock_parser_instance
+
+        im = InstanceManager(mock_rule_manager)
+        with caplog.at_level(logging.INFO, logger='VCG.InstanceManager'):
+            im.generate_instance('simple.v', 'simple_module', 'u_simple')
+
+        port_logs = [
+            r.message for r in caplog.records
+            if 'port connections' in r.message
+        ]
+        assert port_logs, "no 'port connections' INFO log captured"
+
+        nums = [
+            int(re.search(r'with (\d+) port connections', m).group(1))
+            for m in port_logs
+        ]
+        # 期望 N = 4（与 ports 列表长度相等），且严格 > 0（pre-fix 为 0）
+        assert all(n == 4 for n in nums), (
+            f"port-count regression: expected all == 4, got {nums}"
+        )
+
+    def test_port_count_log_single_port_module(
+        self, mock_rule_manager, mock_verilog_parser, caplog
+    ):
+        """TC-REG-02: 极小端口数（1）也应正确报告，排除任何偶然性"""
+        import logging
+        import re
+
+        ports = [MockPortInfo('clk', 'input')]
+        mock_ast = MockAST(ports=ports, parameters=[])
+
+        mock_parser_instance = Mock()
+        mock_parser_instance.parse_file.return_value = mock_ast
+        mock_verilog_parser.return_value = mock_parser_instance
+
+        im = InstanceManager(mock_rule_manager)
+        with caplog.at_level(logging.INFO, logger='VCG.InstanceManager'):
+            im.generate_instance('one.v', 'one_port_module', 'u_one')
+
+        port_logs = [
+            r.message for r in caplog.records
+            if 'port connections' in r.message
+        ]
+        assert port_logs, "no 'port connections' INFO log captured"
+
+        m = re.search(r'with (\d+) port connections', port_logs[0])
+        assert m and int(m.group(1)) == 1, (
+            f"port-count regression: expected 1, got {port_logs[0]!r}"
+        )
 
 
 # ============================================================================

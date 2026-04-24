@@ -62,9 +62,7 @@ class InstanceManager:
             )
             
             if instance_code.strip():
-                lines = instance_code.split('\n')
-                port_count = sum(1 for line in lines if '.(' in line and ')' in line)
-                self.logger.info(f"Instance '{instance_name}' generated successfully with {port_count} port connections")
+                self.logger.info(f"Instance '{instance_name}' generated successfully with {len(port_connections)} port connections")
             
             return instance_code
             
