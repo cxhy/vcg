@@ -166,10 +166,7 @@ class PortInfo:
         
         if isinstance(msb_val, int) and isinstance(lsb_val, int):
             return abs(msb_val - lsb_val) + 1
-        
-        if str(lsb_val) == "0" and str(self.msb_expr).endswith("-1"):
-            return self.msb_expr[:-2]
-        
+
         width_expr = f"({msb_val})-({lsb_val})+1"
         return _calculator.parse_width_expression(width_expr)
     
