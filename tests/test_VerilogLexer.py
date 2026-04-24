@@ -30,16 +30,17 @@ class TestVerilogLexerBasic:
         # 构建成功，无异常即通过
     
     def test_input_without_build(self):
-        """测试未构建即调用input方法"""
+        """构造后 lexer 已自动 build，input() 可直接调用，不抛异常"""
         lexer = VerilogLexer()
-        with pytest.raises(RuntimeError, match="Lexer not built. Call build\\(\\) first."):
-            lexer.input("module test;")
-    
+        lexer.input("module test;")  # 应该不抛任何异常
+
     def test_token_without_build(self):
-        """测试未构建即调用token方法"""
+        """构造后 lexer 已自动 build，token() 可直接调用，不抛异常"""
         lexer = VerilogLexer()
-        with pytest.raises(RuntimeError, match="Lexer not built. Call build\\(\\) first."):
-            lexer.token()
+        lexer.input("module test;")
+        tok = lexer.token()
+        assert tok is not None
+        assert tok.type == "MODULE"
 
 
 class TestKeywords:
@@ -600,25 +601,27 @@ class TestErrorHandling:
         lex.build()
         return lex
     
-    def test_illegal_character(self, lexer, capsys):
+    def test_illegal_character(self, lexer, caplog):
         """测试非法字符处理"""
-        lexer.input("module @test;")
-        
-        # 获取第一个token（module）
-        tok1 = lexer.token()
-        assert tok1 is not None
-        assert tok1.type == "MODULE"
-        
-        # @应该被跳过，下一个是test
-        tok2 = lexer.token()
-        assert tok2 is not None
-        assert tok2.type == "ID"
-        assert tok2.value == "test"
-        
-        # 检查错误输出
-        captured = capsys.readouterr()
-        assert "Lexical error" in captured.out
-        assert "Illegal character" in captured.out
+        import logging
+
+        with caplog.at_level(logging.ERROR, logger='VCG.VerilogLexer'):
+            lexer.input("module @test;")
+
+            # 获取第一个token（module）
+            tok1 = lexer.token()
+            assert tok1 is not None
+            assert tok1.type == "MODULE"
+
+            # @应该被跳过，下一个是test
+            tok2 = lexer.token()
+            assert tok2 is not None
+            assert tok2.type == "ID"
+            assert tok2.value == "test"
+
+        # 检查错误日志
+        assert "Lexical error" in caplog.text
+        assert "Illegal character" in caplog.text
 
 
 class TestComplexExpressions:
