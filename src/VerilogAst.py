@@ -47,7 +47,7 @@ along with VCG.  If not, see <https://www.gnu.org/licenses/>.
 #│  └──────────────────┘      └──────────────────┘         │
 #└─────────────────────────────────────────────────────────┘
 
-from typing import List, Optional, Any, Dict, Union
+from typing import List, Optional, Any, Dict, Union, Generic, TypeVar
 from dataclasses import dataclass, field, fields, replace
 from enum import Enum
 import re
@@ -235,43 +235,64 @@ class PortFactory:
             interface_type=decl.interface_type
         )
 
-class ParameterManager:
-    """参数管理器"""
-    def __init__(self):
-        self._parameters: Dict[str, ParameterInfo] = {}
-        self._parameter_order: List[str] = []
-    
-    def add_parameter(self, param_name: str, **kwargs) -> None:
-        if param_name not in self._parameters:
-            self._parameter_order.append(param_name)
+_T = TypeVar("_T")
 
-        self._parameters[param_name] = ParameterInfo(
+
+class _OrderedRegistry(Generic[_T]):
+    """文件内私有：dict + insertion-order 列表的统一实现。
+
+    子类通过继承复用存储与顺序维护逻辑，仍然暴露各自的对外方法名
+    （add_parameter / add_port_info 等）。公共 API 不变。
+    """
+    def __init__(self) -> None:
+        self._items: Dict[str, _T] = {}
+        self._order: List[str] = []
+
+    def _put(self, key: str, value: _T) -> None:
+        if key not in self._items:
+            self._order.append(key)
+        self._items[key] = value
+
+    def _all(self) -> List[_T]:
+        return [self._items[k] for k in self._order]
+
+
+class ParameterManager(_OrderedRegistry[ParameterInfo]):
+    """参数管理器"""
+    def __init__(self) -> None:
+        super().__init__()
+        # 维持对外 _parameters / _parameter_order 属性别名
+        self._parameters = self._items
+        self._parameter_order = self._order
+
+    def add_parameter(self, param_name: str, **kwargs) -> None:
+        self._put(param_name, ParameterInfo(
             name=param_name,
             param_type=kwargs.get('param_type', 'parameter'),
             default_value=kwargs.get('default_value', ''),
             data_type=kwargs.get('data_type')
-        )
+        ))
 
     def add_parameter_info(self, param_info: ParameterInfo) -> None:
-        if param_info.name not in self._parameters:
-            self._parameter_order.append(param_info.name)
-        self._parameters[param_info.name] = param_info
+        self._put(param_info.name, param_info)
 
     def get_all_parameters(self) -> List[ParameterInfo]:
-        return [self._parameters[name] for name in self._parameter_order]
+        return self._all()
 
-class PortManager:
-    def __init__(self):
-        self._ports: Dict[str, PortInfo] = {}
-        self._port_order: List[str] = []
-    
+
+class PortManager(_OrderedRegistry[PortInfo]):
+    def __init__(self) -> None:
+        super().__init__()
+        # 维持对外 _ports / _port_order 属性别名
+        self._ports = self._items
+        self._port_order = self._order
+
     def add_port_info(self, port_info: PortInfo) -> None:
-        if port_info.name not in self._ports:
-            self._port_order.append(port_info.name)
-        self._ports[port_info.name] = port_info
-    
+        self._put(port_info.name, port_info)
+
     def get_all_ports(self) -> List[PortInfo]:
-        return [self._ports[name] for name in self._port_order]
+        return self._all()
+
 
 class VerilogASTBuilder:
     """AST构建器"""
