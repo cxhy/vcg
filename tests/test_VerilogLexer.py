@@ -60,12 +60,6 @@ class TestKeywords:
         ("endmodule", "ENDMODULE"),
         ("ENDMODULE", "ENDMODULE"),
         ("EndModule", "ENDMODULE"),
-        ("begin", "BEGIN"),
-        ("BEGIN", "BEGIN"),
-        ("Begin", "BEGIN"),
-        ("end", "END"),
-        ("END", "END"),
-        ("End", "END"),
         ("input", "INPUT"),
         ("INPUT", "INPUT"),
         ("Input", "INPUT"),
@@ -93,9 +87,6 @@ class TestKeywords:
         ("assign", "ASSIGN"),
         ("ASSIGN", "ASSIGN"),
         ("Assign", "ASSIGN"),
-        ("always", "ALWAYS"),
-        ("ALWAYS", "ALWAYS"),
-        ("Always", "ALWAYS"),
     ])
     def test_keywords(self, lexer, keyword, expected_type):
         """测试关键字识别（包括大小写变体）"""

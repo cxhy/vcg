@@ -23,8 +23,9 @@ along with VCG.  If not, see <https://www.gnu.org/licenses/>.
 
 import ply.yacc as yacc
 from typing import Optional, Dict, Any, List
-from .vcg_logger import get_vcg_logger,setup_vcg_logging
-from pathlib import Path
+
+from .vcg_exceptions import VCGError, VCGFileError, VCGParseError
+from .vcg_logger import get_vcg_logger
 
 from .VerilogAst import VerilogAST, VerilogASTBuilder, VerilogASTError
 from .VerilogLexer import VerilogLexer
@@ -65,97 +66,90 @@ class VerilogParser:
         self.parse_errors: List[str] = []
 
     
-    def parse_file(self, filepath: str) -> Optional[VerilogAST]:
+    def parse_file(self, filepath: str) -> VerilogAST:
         """
-        从文件解析Verilog代码
-        
-        Args:
-            filepath: Verilog文件路径
-            
-        Returns:
-            VerilogAST对象，解析失败返回None
+        从文件解析 Verilog 代码。
+
+        Raises:
+            VCGFileError: 文件不存在、无法读取、或编码错误
+            VCGParseError: 语法/语义错误导致无法构建 AST
         """
+        self.logger.info(f"Reading file: {filepath}")
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 verilog_code = f.read()
-            
-            self.logger.info(f"Reading file: {filepath}")
-            return self.parse_string(verilog_code)
-        except FileNotFoundError:
-            self.logger.error(f"File not found: {filepath}")
-            return None
-        except Exception as e:
-            self.logger.error(f"Error reading file {filepath}: {e}")
-            return None
-    
-    def parse_string(self, verilog_code: str) -> Optional[VerilogAST]:
+        except FileNotFoundError as e:
+            raise VCGFileError(f"Verilog file not found: {filepath}") from e
+        except UnicodeDecodeError as e:
+            raise VCGFileError(f"Encoding error in {filepath}: {e}") from e
+        except OSError as e:
+            raise VCGFileError(f"Failed to read {filepath}: {e}") from e
+        return self.parse_string(verilog_code)
+
+    def parse_string(self, verilog_code: str) -> VerilogAST:
         """
-        直接解析Verilog代码字符串
-        
-        Args:
-            verilog_code: Verilog源代码
-            
-        Returns:
-            VerilogAST对象，解析失败返回None
+        直接解析 Verilog 代码字符串。
+
+        Raises:
+            VCGParseError: 预处理/词法/语法/AST 构建中的任一阶段失败
+            VCGFileError: 预处理阶段 include 文件缺失（由预处理器抛出）
         """
+        self.builder = VerilogASTBuilder()
+        self.ast = None
+        self.parse_errors.clear()
+
         try:
             preprocessed_code = self.preprocessor.preprocess_string(verilog_code)
             self.logger.debug(f"Preprocessed code:\n{preprocessed_code}")
 
-            self.builder = VerilogASTBuilder()
-            self.ast = None
-            self.parse_errors.clear()
-
             if not self.lexer.lexer:
                 self.lexer.build()
-            
             self.lexer.input(preprocessed_code)
 
-            result = self.parser.parse(
-                lexer=self.lexer.lexer,
-                debug=self.debug
-            )
-            
-            if self.parse_errors:
-                self.logger.warning(f"Parse completed with {len(self.parse_errors)} errors")
-                for error in self.parse_errors:
-                    self.logger.warning(f"  - {error}")
-            
-            return self.ast
-            
+            self.parser.parse(lexer=self.lexer.lexer, debug=self.debug)
+        except VCGError:
+            raise
         except Exception as e:
-            self.logger.error(f"Parse failed: {e}")
-            return None
+            raise VCGParseError(f"Unexpected parse failure: {e}") from e
+
+        if self.parse_errors:
+            self.logger.warning(f"Parse completed with {len(self.parse_errors)} errors")
+            for error in self.parse_errors:
+                self.logger.warning(f"  - {error}")
+
+        if self.ast is None:
+            if self.parse_errors:
+                raise VCGParseError(
+                    f"Parse failed with errors: {'; '.join(self.parse_errors)}"
+                )
+            raise VCGParseError(
+                "Parser did not produce an AST (no module declaration found?)"
+            )
+        return self.ast
     
     def get_module_info(self) -> Optional[Dict[str, Any]]:
-        if self.ast:
-            return {
-                "name": self.ast.module_name,
-                "parameters": [
-                    {
-                        "name": p.name,
-                        "type": p.param_type,
-                        "default_value": p.default_value
-                    } for p in self.ast.get_parameter_info()
-                ],
-                "ports": [
-                    {
-                        "name": p.name,
-                        "direction": p.direction,
-                        "net_type": p.net_type,
-                        "range": p.range_string,
-                        "width": p.width,
-                        "type": p.port_type.value
-                    } for p in self.ast.get_port_info()
-                ]
-            }
-        else:
-            self.logger.warning("get_module_info called but AST is None, returning empty structure")
-            return {
-                "name": "",
-                "parameters": [],
-                "ports": []
-            }
+        if self.ast is None:
+            return None
+        return {
+            "name": self.ast.module_name,
+            "parameters": [
+                {
+                    "name": p.name,
+                    "type": p.param_type,
+                    "default_value": p.default_value
+                } for p in self.ast.get_parameter_info()
+            ],
+            "ports": [
+                {
+                    "name": p.name,
+                    "direction": p.direction,
+                    "net_type": p.net_type,
+                    "range": p.range_string,
+                    "width": p.width,
+                    "type": p.port_type.value
+                } for p in self.ast.get_port_info()
+            ]
+        }
     
 
     precedence = (
@@ -183,45 +177,35 @@ class VerilogParser:
     def p_module_declaration(self, p):
         """module_declaration : MODULE module_name opt_parameter_list opt_port_list SEMICOLON module_item_list ENDMODULE"""
         module_name = p[2]
-        try:
-            if self.builder:
-                self.builder.set_module_name(module_name)
-                
-                self.ast = self.builder.build()
-                
-                self.logger.info(f"Successfully parsed module: {module_name}")
-                self.logger.debug(f"  - Parameters: {len(self.ast.get_parameter_info())}")
-                self.logger.debug(f"  - Ports: {len(self.ast.get_port_info())}")
-                
-        except VerilogASTError as e:
-            self.logger.error(f"Failed to build AST for module '{module_name}': {e}")
-            self.parse_errors.append(str(e))
-            self.ast = VerilogAST(module_name)
-        except Exception as e:
-            self.logger.error(f"Unexpected error building AST: {e}")
-            self.ast = VerilogAST(module_name)
-        
+        self._finalize_ast(module_name)
         p[0] = self.ast
-    
+
     def p_module_declaration_error(self, p):
         """module_declaration : MODULE module_name error ENDMODULE"""
         module_name = p[2]
         self.logger.error(f"Syntax error in module declaration: {module_name}")
+        self.parse_errors.append(
+            f"Syntax error inside module '{module_name}' declaration"
+        )
+        # 不构造伪造 AST；parse_string 会基于 ast is None + parse_errors 抛 VCGParseError
+        p[0] = None
 
-        if self.builder:
-            try:
-                self.builder.set_module_name(module_name)
-                self.ast = self.builder.build()
-            except VerilogASTError as e:
-                self.logger.warning(f"Failed to build AST: {e}, creating empty AST")
-                self.ast = VerilogAST(module_name)
-            except Exception as e:
-                self.logger.error(f"Unexpected error: {e}")
-                self.ast = VerilogAST(module_name)
-        else:
-            self.ast = VerilogAST(module_name)
-
-        p[0] = self.ast
+    def _finalize_ast(self, module_name: str) -> None:
+        """Build the AST from the current builder. Records errors instead of raising
+        inside yacc actions — parse_string inspects self.ast / self.parse_errors."""
+        if self.builder is None:
+            self.parse_errors.append("Internal error: AST builder not initialized")
+            return
+        try:
+            self.builder.set_module_name(module_name)
+            self.ast = self.builder.build()
+            self.logger.info(f"Successfully parsed module: {module_name}")
+            self.logger.debug(f"  - Parameters: {len(self.ast.get_parameter_info())}")
+            self.logger.debug(f"  - Ports: {len(self.ast.get_port_info())}")
+        except VerilogASTError as e:
+            self.logger.error(f"Failed to build AST for module '{module_name}': {e}")
+            self.parse_errors.append(f"AST build failed: {e}")
+            self.ast = None
     
     def p_module_name(self, p):
         """module_name : ID"""
@@ -229,6 +213,7 @@ class VerilogParser:
     
     def p_opt_parameter_list(self, p):
         """opt_parameter_list : HASH LPAREN parameter_declaration_list RPAREN
+                              | HASH LPAREN RPAREN
                               | HASH LPAREN error RPAREN
                               | empty"""
         pass
@@ -271,6 +256,12 @@ class VerilogParser:
                          | LPAREN RPAREN
                          | empty"""
         pass
+
+    def p_opt_port_list_error(self, p):
+        """opt_port_list : LPAREN error RPAREN"""
+        self.parse_errors.append(
+            f"Invalid port list near line {p.lineno(1)}"
+        )
 
     def p_port_list(self, p):
         """port_list : port_declaration
@@ -326,7 +317,7 @@ class VerilogParser:
         if len(p) == 6:
             p[0] = {'msb': p[2], 'lsb': p[4]}
         elif len(p) == 4:
-            self.parse_errors.append(f"Invalid dimension at line {p.lineno(1)}")
+            self.parse_errors.append(f"Invalid dimension near line {p.lineno(2)}")
             p[0] = None
         else:
             p[0] = None
@@ -338,14 +329,19 @@ class VerilogParser:
     def p_module_item_list(self, p):
         """module_item_list : empty
                             | module_item_list module_item
-                            | module_item
-                            | module_item_list error SEMICOLON"""
+                            | module_item"""
         pass
+
+    def p_module_item_list_error(self, p):
+        """module_item_list : module_item_list error SEMICOLON"""
+        # Error-recovery path: record it so parse_string doesn't return silently.
+        self.parse_errors.append(
+            f"Syntax error in module body near line {p.lineno(3)}"
+        )
     
     def p_module_item(self, p):
         """module_item : module_item_declaration
                        | module_item_assignment
-                       | module_item_always
                        | module_item_instance"""
         pass
     
@@ -405,14 +401,14 @@ class VerilogParser:
     
     def p_module_item_assignment(self, p):
         """module_item_assignment : ASSIGN expression EQUALS expression SEMICOLON"""
-        pass
-    def p_module_item_always(self, p):
-        """module_item_always : ALWAYS expression BEGIN expression_list END"""
-        pass
-    
+        # module-level assign: tokens are consumed, no AST node is built
+        # (VCG only cares about module headers — params/ports).
+        self.logger.debug("Skipped module-level assign (not represented in AST)")
+
     def p_module_item_instance(self, p):
         """module_item_instance : ID ID LPAREN expression_list RPAREN SEMICOLON"""
-        pass
+        # module-level positional instance: consumed but not represented.
+        self.logger.debug("Skipped module-level instance (not represented in AST)")
     
     def p_expression_binop(self, p):
         """expression : expression PLUS expression
@@ -435,18 +431,18 @@ class VerilogParser:
                       | expression XNOR expression
                       | expression LSHIFT expression
                       | expression RSHIFT expression"""
-        p[0] = f"{p[1]}{p[2]}{p[3]}"
-    
+        p[0] = f"{p[1]} {p[2]} {p[3]}"
+
     def p_expression_unary(self, p):
         """expression : PLUS expression %prec UPLUS
                       | MINUS expression %prec UMINUS
                       | NOT expression %prec UNOT
                       | LNOT expression %prec ULNOT"""
         p[0] = f"{p[1]}{p[2]}"
-    
+
     def p_expression_ternary(self, p):
         """expression : expression COND expression COLON expression"""
-        p[0] = f"{p[1]}?{p[3]}:{p[5]}"
+        p[0] = f"{p[1]} ? {p[3]} : {p[5]}"
     
     def p_expression_paren(self, p):
         """expression : LPAREN expression RPAREN"""
@@ -535,6 +531,9 @@ class VerilogParser:
             error_msg = f"Syntax error at token '{p.value}' (line {p.lineno}, position {p.lexpos})"
             self.logger.error(error_msg)
             self.parse_errors.append(error_msg)
+            # Rely on the `error` productions (opt_parameter_list, module_item_list, etc.)
+            # to resynchronize. Advancing the token here breaks those rules and causes
+            # cascaded failures. errok() signals yacc to resume after this point.
             self.parser.errok()
         else:
             error_msg = "Syntax error at EOF"

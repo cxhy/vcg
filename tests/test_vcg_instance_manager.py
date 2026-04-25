@@ -125,35 +125,35 @@ class TestFileParsingFeatures:
     """测试文件解析功能"""
     
     def test_file_not_exist_error(self, mock_rule_manager, mock_verilog_parser):
-        """TC-001: 功能点3.1.2- 文件不存在时抛出VCGFileError"""
+        """TC-001: 功能点3.1.2- parser 抛 VCGFileError 时 manager 冒泡"""
         from src.vcg_instance_manager import VCGFileError
-        
+
         non_exist_file = '/path/to/nonexistent/file.v'
         mock_parser_instance = Mock()
-        mock_parser_instance.parse_file.side_effect = FileNotFoundError(
-            f"[Errno 2] No such file or directory: '{non_exist_file}'"
+        mock_parser_instance.parse_file.side_effect = VCGFileError(
+            f"Verilog file not found: {non_exist_file}"
         )
         mock_verilog_parser.return_value = mock_parser_instance
-        
+
         im = InstanceManager(mock_rule_manager)
         with pytest.raises(VCGFileError) as exc_info:
             im.generate_instance(non_exist_file, 'test_module', 'u_test')
-        
+
         error_msg = str(exc_info.value)
-        assert (non_exist_file in error_msg or 
+        assert (non_exist_file in error_msg or
                 'cannot find' in error_msg.lower() or
                 'not found' in error_msg.lower())
-    
+
     def test_parse_error_handling(self, mock_rule_manager, mock_verilog_parser):
-        """TC-002: 功能点3.1.3 - 文件格式错误处理"""
+        """TC-002: 功能点3.1.3 - parser 抛 VCGParseError 时 manager 冒泡"""
         from src.vcg_instance_manager import VCGParseError
-        
+
         mock_parser_instance = Mock()
-        mock_parser_instance.parse_file.return_value = None
+        mock_parser_instance.parse_file.side_effect = VCGParseError("Parse failed")
         mock_verilog_parser.return_value = mock_parser_instance
-        
+
         im = InstanceManager(mock_rule_manager)
-        
+
         with pytest.raises(VCGParseError):
             im.generate_instance('invalid_file.v', 'test_module', 'u_test')
     
@@ -620,44 +620,46 @@ class TestExceptionHandling:
     """测试异常处理"""
     
     def test_vcg_file_error_exception(self, mock_rule_manager, mock_verilog_parser):
-        """TC-026: VCGFileError异常"""
+        """TC-026: VCGFileError 由 parser 抛出并冒泡"""
         from src.vcg_instance_manager import VCGFileError
-        
+
         mock_parser_instance = Mock()
-        mock_parser_instance.parse_file.side_effect = FileNotFoundError("File not found")
+        mock_parser_instance.parse_file.side_effect = VCGFileError(
+            "Verilog file not found: missing.v"
+        )
         mock_verilog_parser.return_value = mock_parser_instance
-        
+
         im = InstanceManager(mock_rule_manager)
-        
+
         with pytest.raises(VCGFileError) as exc_info:
             im.generate_instance('missing.v', 'test', 'u_test')
-        
+
         assert 'not found' in str(exc_info.value).lower() or 'missing.v' in str(exc_info.value)
-    
+
     def test_vcg_parse_error_exception(self, mock_rule_manager, mock_verilog_parser):
-        """TC-027: VCGParseError异常"""
+        """TC-027: VCGParseError 由 parser 抛出并冒泡"""
         from src.vcg_instance_manager import VCGParseError
-        
+
         mock_parser_instance = Mock()
-        mock_parser_instance.parse_file.return_value = None
+        mock_parser_instance.parse_file.side_effect = VCGParseError("Parse failed")
         mock_verilog_parser.return_value = mock_parser_instance
-        
+
         im = InstanceManager(mock_rule_manager)
-        
+
         with pytest.raises(VCGParseError):
             im.generate_instance('bad.v', 'test', 'u_test')
-    
+
     def test_unexpected_exception_handling(self, mock_rule_manager, mock_verilog_parser):
-        """TC-028: 未预期错误转换"""
-        from src.vcg_instance_manager import VCGParseError
-        
+        """TC-028: 未预期错误被包装为 VCGRuntimeError"""
+        from src.vcg_exceptions import VCGRuntimeError
+
         mock_parser_instance = Mock()
         mock_parser_instance.parse_file.side_effect = RuntimeError("Unexpected error")
         mock_verilog_parser.return_value = mock_parser_instance
-        
+
         im = InstanceManager(mock_rule_manager)
-        
-        with pytest.raises((VCGParseError, RuntimeError)):
+
+        with pytest.raises(VCGRuntimeError):
             im.generate_instance('test.v', 'test', 'u_test')
 
 

@@ -66,19 +66,15 @@ class InstanceManager:
             
             return instance_code
             
-        except FileNotFoundError:
-            self.logger.error(f"Verilog file not found: {file_path}")
-            raise VCGFileError(f"Cannot find Verilog File: {file_path}")
+        except (VCGFileError, VCGParseError):
+            raise
         except Exception as e:
             self.logger.error(f"Instance generation failed: {e}")
-            raise VCGParseError(f"Generate instance Error: {e}")
-    
+            raise VCGRuntimeError(f"Generate instance Error: {e}") from e
+
     def _parse_verilog_file(self, file_path: str):
         self.logger.debug(f"Parsing Verilog file: {file_path}")
-        ast = self.parser.parse_file(file_path)
-        if not ast:
-            raise VCGParseError(f"Cannot Parse Verilog File: {file_path}")
-        return ast
+        return self.parser.parse_file(file_path)
     
     def _generate_port_connections(self, ports: List[PortInfo]) -> Tuple[Dict[str, str], Dict[str, PortInfo]]:
         connections = {}

@@ -21,9 +21,7 @@ along with VCG.  If not, see <https://www.gnu.org/licenses/>.
 # Author: cxhy
 # Created: 2025-07-31
 # Description: 
-import re
 from typing import List, Dict, Optional, Tuple
-from pathlib import Path
 from .VerilogParser import VerilogParser
 from .VerilogAst import PortInfo, ParameterInfo, PortType
 from .vcg_rule_manager import VCGRuleManager
@@ -71,28 +69,15 @@ class WiresManager:
             self.logger.info(f"Wire generation completed: {generated_count} wires generated, {skipped_count} ports skipped")
             return '\n'.join(wire_declarations)
 
-        except FileNotFoundError:
-            self.logger.error(f"Verilog file not found: {file_path}")
-            raise VCGFileError(f"Cannot found Verilog File: {file_path}")
-        except ValueError:
-            raise
-        except VCGParseError:
+        except (VCGFileError, VCGParseError, ValueError):
             raise
         except Exception as e:
             self.logger.error(f"Wire generation failed: {e}")
-            raise VCGParseError(f"Generate Wire Error: {e}")
-    
+            raise VCGRuntimeError(f"Generate Wire Error: {e}") from e
+
     def _parse_verilog_file(self, file_path: str):
         self.logger.debug(f"Parsing Verilog file: {file_path}")
-        if not file_path or not Path(file_path).exists():
-            raise FileNotFoundError(f"File not found: {file_path}")
-        ast = self.parser.parse_file(file_path)
-        if not ast:
-            if self.parser.parse_errors:
-                error_msg = "; ".join(self.parser.parse_errors)
-                raise VCGParseError(f"Parse errors in {file_path}: {error_msg}")
-            raise VCGParseError(f"Cannot Parser Verilog file: {file_path}")
-        return ast
+        return self.parser.parse_file(file_path)
     
     def _get_ports_by_direction(self, ast, port_direction: Optional[str]) -> List[PortInfo]:
         all_ports = ast.get_port_info()

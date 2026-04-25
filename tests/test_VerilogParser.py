@@ -15,6 +15,7 @@ from typing import Dict, Any
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 from src.VerilogParser import VerilogParser
+from src.vcg_exceptions import VCGParseError, VCGFileError
 
 
 class TestVerilogParserBasic:
@@ -53,11 +54,10 @@ class TestVerilogParserBasic:
         assert len(info['parameters']) == 0
     
     def test_f1_4_missing_module_name(self):
-        """F1.4: 模块名缺失"""
+        """F1.4: 模块名缺失 — 应抛 VCGParseError"""
         code = "module ; endmodule"
-        ast = self.parser.parse_string(code)
-        # 应该解析失败
-        assert ast is None or self.parser.get_module_info() is None
+        with pytest.raises(VCGParseError):
+            self.parser.parse_string(code)
 
 
 class TestVerilogParserParameters:
@@ -159,12 +159,10 @@ class TestVerilogParserParameters:
         assert len(info['parameters']) == 0
     
     def test_f2_12_parameter_syntax_error(self):
-        """F2.12: 参数声明语法错误"""
+        """F2.12: 参数声明语法错误 — 应抛 VCGParseError"""
         code = "module m #(parameter); endmodule"
-        # 应记录错误并继续解析，或返回None
-        result = self.parser.parse_string(code)
-        # 验证容错行为
-        assert result is None or isinstance(result, object)
+        with pytest.raises(VCGParseError):
+            self.parser.parse_string(code)
     
     # ========== F2.13-F2.15: 模块内部参数声明 ==========
     
@@ -565,65 +563,61 @@ class TestVerilogParserErrorHandling:
     # ========== F5: 错误处理 ==========
     
     def test_f5_1_file_not_found(self):
-        """F5.1: 文件不存在"""
-        result = self.parser.parse_file("/nonexistent/path/file.v")
-        assert result is None
-    
+        """F5.1: 文件不存在 — 应抛 VCGFileError"""
+        with pytest.raises(VCGFileError):
+            self.parser.parse_file("/nonexistent/path/file.v")
+
     def test_f5_2_file_encoding_error(self):
-        """F5.2: 文件编码错误"""
-        # 创建临时文件，写入非UTF-8字符
+        """F5.2: 文件编码错误 — 应抛 VCGFileError"""
         with tempfile.NamedTemporaryFile(mode='wb', suffix='.v', delete=False) as f:
             f.write(b'\xff\xfe\x00\x00')  # 无效UTF-8序列
             temp_path = f.name
-        
+
         try:
-            result = self.parser.parse_file(temp_path)
-            # 应返回None或抛出异常被捕获
-            assert result is None or isinstance(result, object)
+            with pytest.raises(VCGFileError):
+                self.parser.parse_file(temp_path)
         finally:
             os.unlink(temp_path)
-    
+
     def test_f5_3_missing_endmodule(self):
-        """F5.3: 缺少endmodule"""
+        """F5.3: 缺少 endmodule — PLY 在 EOF 处可能恢复，接受 AST 或 VCGParseError 皆可"""
         code = "module test(input clk);"
-        result = self.parser.parse_string(code)
-        # 应尝试恢复或返回None
-        assert result is None or isinstance(result, object)
-    
+        try:
+            ast = self.parser.parse_string(code)
+            # 恢复成功时必须返回真实 AST，不能是伪造的空模块
+            assert ast is not None
+        except VCGParseError:
+            pass  # 明确报错也是可接受行为
+
     def test_f5_4_port_syntax_error(self):
-        """F5.4: 端口声明语法错误"""
+        """F5.4: 端口声明语法错误 — 应抛 VCGParseError"""
         code = "module m(input ); endmodule"
-        result = self.parser.parse_string(code)
-        # 应记录错误并继续
-        assert result is None or isinstance(result, object)
-    
+        with pytest.raises(VCGParseError):
+            self.parser.parse_string(code)
+
     def test_f5_5_parameter_syntax_error(self):
-        """F5.5: 参数声明语法错误"""
+        """F5.5: 参数声明语法错误 — 应抛 VCGParseError"""
         code = "module m; parameter ; endmodule"
-        result = self.parser.parse_string(code)
-        # 应记录错误并继续
-        assert result is None or isinstance(result, object)
-    
+        with pytest.raises(VCGParseError):
+            self.parser.parse_string(code)
+
     def test_f5_6_width_expression_error(self):
-        """F5.6: 位宽表达式错误"""
+        """F5.6: 位宽表达式错误 — 应抛 VCGParseError"""
         code = "module m(input [error] d); endmodule"
-        result = self.parser.parse_string(code)
-        # 应记录错误并继续
-        assert result is None or isinstance(result, object)
-    
+        with pytest.raises(VCGParseError):
+            self.parser.parse_string(code)
+
     def test_f5_7_expression_syntax_error(self):
-        """F5.7: 表达式语法错误"""
+        """F5.7: 表达式语法错误 — 应抛 VCGParseError"""
         code = "module m #(parameter P = ++); endmodule"
-        result = self.parser.parse_string(code)
-        # 应记录错误
-        assert result is None or isinstance(result, object)
-    
+        with pytest.raises(VCGParseError):
+            self.parser.parse_string(code)
+
     def test_f5_8_incomplete_module(self):
-        """F5.8: EOF前遇到语法错误（不完整的模块）"""
+        """F5.8: EOF前遇到语法错误（不完整的模块） — 应抛 VCGParseError"""
         code = "module test(input clk"
-        result = self.parser.parse_string(code)
-        # 应记录错误，可能返回部分结果
-        assert result is None or isinstance(result, object)
+        with pytest.raises(VCGParseError):
+            self.parser.parse_string(code)
     
     def test_f5_9_multiple_parse_calls(self):
         """F5.9: 多次调用parse方法"""
@@ -742,14 +736,14 @@ class TestVerilogParserBoundaryConditions:
         assert 'h' in param_value.lower() and 'F' in param_value.upper()
     
     def test_b7_empty_string_parse(self):
-        """B7: 空字符串解析"""
-        result = self.parser.parse_string("")
-        assert result is None or self.parser.get_module_info() is None
-    
+        """B7: 空字符串解析 — 应抛 VCGParseError"""
+        with pytest.raises(VCGParseError):
+            self.parser.parse_string("")
+
     def test_b8_whitespace_only(self):
-        """B8: 仅空白符"""
-        result = self.parser.parse_string("   \n\n  \t  ")
-        assert result is None or self.parser.get_module_info() is None
+        """B8: 仅空白符 — 应抛 VCGParseError"""
+        with pytest.raises(VCGParseError):
+            self.parser.parse_string("   \n\n  \t  ")
     
     # ========== B9-B10: 混合风格 ==========
     

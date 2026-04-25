@@ -36,8 +36,6 @@ class VerilogLexer:
     reserved = {
         'module':     'MODULE',
         'endmodule':  'ENDMODULE',
-        'begin':      'BEGIN',
-        'end':        'END',
         'input':      'INPUT',
         'inout':      'INOUT',
         'output':     'OUTPUT',
@@ -47,7 +45,6 @@ class VerilogLexer:
         'parameter':  'PARAMETER',
         'localparam': 'LOCALPARAM',
         'assign':     'ASSIGN',
-        'always':     'ALWAYS',
     }
 
     keywords_list_spec = tuple(reserved.values())
