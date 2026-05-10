@@ -2,148 +2,142 @@
 
 | 字段 | 值 |
 |------|----|
-| 来源 | 继续重构前的架构盘点 |
-| 依据 | `doc/review/00_INDEX.md`、`doc/decisions/*`、当前 `src/` 实现 |
-| 状态 | backlog |
+| 来源 | 最初 `doc/review/00_INDEX.md` + 当前提交记录 + TASK-01..05 |
+| 状态 | updated |
+| 更新 | 2026-05-10 |
+
+## 当前结论
+
+最初 review 覆盖的 12 个主要 Python 文件中，核心 P0/P1 问题已经完成大半。当前不应再重复启动
+`VerilogAst.py`、`vcg_file_processor.py`、`VerilogPreprocess.py`、`vcg_execution_engine.py`、
+`vcg_logger.py`、`vcg_rule_manager.py` 的同类重构任务，除非后续验证发现回归。
+
+剩余值得开 TASK 的模块主要是：
+
+1. `src/vcg_instance_manager.py`
+2. `src/vcg_wires_manager.py`
+3. `src/VerilogLexer.py`
+4. `src/VerilogParser.py` 的异常类型收尾
+
+`src/vcg_exceptions.py` 已完成 TASK-05，但尚未提交时，本文件按“已完成实现、待提交”记录。
 
 ## 已完成或基本完成
-
-这些内容不应重复开新任务，除非后续验证发现回归。
 
 | 模块 | 状态 | 依据 |
 |------|------|------|
 | package/CLI import 路径 | 已完成关键修复 | `3c1c70c refactor: package src/ and move CLI entry to project root` |
-| `VerilogLexer.py` 字符串转义 bug | 已完成关键修复 | `18a3c94 fix: correct STRING_LITERAL escape order in lexer` |
-| `VerilogLexer.py` 死代码清理 | 已做一轮 | `a074837 refactor: clean up VerilogLexer.py dead code and normalize error handling` |
-| `vcg_instance_manager.py` 端口计数恒 0 | 已完成关键修复 | `2f9ecd5 fix: count port connections directly instead of grepping generated text` |
-| `VerilogParser.py` silent failure | 已完成一轮结构性重构 | `doc/decisions/2026-04-25_parser_refactor.md` |
-| `VerilogAst.py` | TASK-01 全链完成 | `doc/task_01_refactor_verilogast.md`、`doc/check_01_refactor_verilogast.md` |
-| `vcg_logger.py` | 已完成手工重构 | `doc/delivery_manual_vcg_logger_refactor.md` |
-| `vcg_rule_manager.py` | 已完成结构性重构 | `doc/delivery_manual_vcg_rule_manager_refactor.md` |
+| `src/VerilogAst.py` | TASK-01 完成 | `doc/task_01_refactor_verilogast.md`、`doc/check_01_refactor_verilogast.md` |
+| `src/vcg_file_processor.py` | TASK-02 完成 | `20c8850 refactor: restructure VCG file processor` |
+| `src/VerilogPreprocess.py` | TASK-03 完成 | `7c679f6 refactor: restructure Verilog preprocessor` |
+| `src/vcg_execution_engine.py` | TASK-04 完成 | `f4fe971 refactor: simplify VCG execution engine` |
+| `src/vcg_exceptions.py` | TASK-05 已实现，待提交 | `doc/task_05_refactor_vcg_exceptions.md` |
+| 根目录 `vcg.py` | TASK-06 已实现，待提交 | `doc/task_06_refactor_cli_entry.md` |
+| `src/vcg_logger.py` | 已完成手工重构 | `doc/delivery_manual_vcg_logger_refactor.md` |
+| `src/vcg_rule_manager.py` | 已完成结构性重构 | `936dfdb refactor: harden rule manager` |
+| `src/VerilogLexer.py` 字符串转义 bug | 已完成关键修复 | `18a3c94 fix: correct STRING_LITERAL escape order in lexer` |
+| `src/VerilogLexer.py` 死代码清理 | 已做一轮 | `a074837 refactor: clean up VerilogLexer.py dead code and normalize error handling` |
+| `src/VerilogParser.py` silent failure | 已完成一轮结构性重构 | `12931bd refactor: Parser error handling + drop unused always/begin/end grammar` |
+| `src/vcg_instance_manager.py` 端口计数恒 0 | 已完成关键修复 | `2f9ecd5 fix: count port connections directly instead of grepping generated text` |
 
-## P0：下一批最应该重构
+## P0：建议下一批任务
 
-### 1. `src/vcg_file_processor.py`
+### TASK-07 候选：`src/vcg_instance_manager.py`
 
-当前仍是最高优先级。核心问题：
+这个模块真 bug 已修，但结构仍偏字符串渲染脚本。适合做一次数据结构和渲染层分离。
 
-- `process_file()` 仍使用 `os.chdir()` 修改全进程 CWD。
-- `VCGBlock` 是可变对象，`generated_content` 后填，违反不可变约束。
-- `_extract_vcg_blocks()` 不显式处理 nested/orphan/unterminated `VCG_BEGIN`/`VCG_END`。
-- `_inject_generated_content_for_blocks()` 仍依赖 `current_block_id` 与已有 `VCG_GEN_BEGIN_<id>` 的隐式同步。
-- `except Exception` 包装成 `VCGFileError`，错误阶段和原异常类型丢失。
-- 仍使用手动 `set_file_context()`/`clear_file_context()`，应改用 `vcg_logger.file_context()`。
-- 源文件尾部还有 `test()` 与 `__main__` 硬编码调试入口。
+主要问题：
 
-建议拆成一个独立 TASK：冻结 `VCGBlock`，新增 `ExecutedBlock`，按行号区间重写注入逻辑，彻底移除 `os.chdir()`。
+- `_generate_port_connections()` 返回两个 dict：`connections` 和 `port_infos`，靠 key 同步。
+- 渲染层仍检查 `if port_name in port_infos`，说明数据结构没有表达完整事实。
+- `_ALIGN = 18` 是实例属性魔法数，且注释列使用 `_ALIGN * 2`。
+- `_render_parameter_section()` 与 `_render_port_section()` 都重复处理“最后一项不加逗号”。
+- `set_alignment()` / `get_alignment()` 是公开 API，需保留或通过测试确认迁移策略。
+- `except Exception` 仍包装为 `VCGRuntimeError`，需要明确 VCG 子类透传边界。
 
-### 2. `src/VerilogPreprocess.py`
+建议范围：
 
-基本未重构。核心问题：
+- 引入 `PortConnection(frozen=True)` 和 `ParameterConnection(frozen=True)`。
+- 渲染函数接受结构化列表，而不是多 dict 并行传递。
+- 抽出逗号渲染 helper，保持输出完全兼容。
+- 保留 `set_alignment()` / `get_alignment()`，避免破坏既有测试和用户 API。
 
-- 名为 preprocess，但不处理 ``define`` / ``undef`` / 宏体展开。
-- 条件编译状态仍是 dict 栈，`condition` 等字段语义冗余。
-- 仍用正则和行扫描处理 Verilog 结构，注释、属性、跨行声明、字符串里的 `;` 都有风险。
-- `preprocess_file()` / `preprocess_string()` 仍用 `RuntimeError` 和宽泛 `except Exception`。
-- 文件尾部仍有 `__main__` 调试代码。
+### TASK-08 候选：`src/vcg_wires_manager.py`
 
-建议先决定方向：缩小职责为 `ModulePortExtractor`，还是补成真正预处理器。不要继续在当前正则实现上小修。
+该模块和 InstanceManager 对称，但风险点集中在宽度格式化。建议先做低风险拆分，不要直接引入复杂 ADT。
 
-### 3. `src/vcg_execution_engine.py`
+主要问题：
 
-核心架构可保留，但还没清理到位：
-
-- `execute()` 仍用 `except Exception` 把所有 VCG 子类包装成 `VCGRuntimeError`，缺 `from e`。
-- `OrderedOutputManager` 仍有 `add_text_output()` / `add_instance_output()` / `add_wires_output()` 三个重复接口。
-- 仍有 6 个 `_create_*_func()` 闭包工厂，样板代码偏多。
-- `expand_path()` 不检查路径是否存在，错误会延迟到下游。
-- `__builtins__` 全开放，至少要在接口文档中明确“VCG 脚本是可信 Python 代码”。
-
-建议作为中等规模 cleanup TASK，目标是删样板、保留 DSL 行为不变。
-
-## P1：部分修过，但还没有完成结构性重构
-
-### 5. 根目录 `vcg.py`
-
-package import 已修，但 CLI 本体仍保留 review 里的多数问题：
-
-- `parse_macros_argument()` 仍可能返回 `None` / `list` / `dict` 三种形态。
-- 文件不存在仍抛 `VCGError` 父类，而不是 `VCGFileError`。
-- `setup_vcg_logging()` 在文件存在性校验之后才执行。
-- `except Exception` 仍打印 `"Unknow Error"`，无 traceback，退出码不区分未知错误。
-- `--debug` 参数仍未接入实际行为。
-- 成功和错误输出仍主要走 `print`。
-
-建议做一个小 TASK：CLI 错误处理 + macros 数据契约统一。
-
-### 6. `src/vcg_instance_manager.py`
-
-真 bug 已修，剩余是数据结构和渲染清理：
-
-- `_generate_port_connections()` 仍返回两个 dict：`connections` 与 `port_infos`，隐含 key 同步契约。
-- 应引入 `PortConnection(frozen=True)`，渲染层不再检查 `if port_name in port_infos`。
-- `_ALIGN = 18` 仍是 magic number，注释列用 `_ALIGN * 2`。
-- `_render_parameter_section()` 与 `_render_port_section()` 仍重复处理“最后一项不加逗号”。
-- `set_alignment()` / `get_alignment()` 是否保留需要 grep 外部调用后决定。
-
-建议与 `vcg_wires_manager.py` 分开做，避免输出格式回归面太大。
-
-### 7. `src/vcg_wires_manager.py`
-
-异常包装已有改善，但宽度模型仍没重构：
-
-- `width` 仍是 int / str / range-string / expression / multi-dim string 混合语义。
-- `_format_wire_width()` 仍靠 `isdigit()`、`startswith("[")`、operator sniffing 分类。
-- `_is_multi_dimensional()` 仍靠 `']['` 判断，空格形式会漏判。
+- `width` 同时表示 int、数字字符串、range string、表达式、多维数组字符串。
+- `_format_wire_width()` 通过 `isdigit()`、`startswith("[")`、operator sniffing 分类。
+- `_is_multi_dimensional()` 只识别紧贴的 `']['`，对 `[3:0] [7:0]` 这类空格形式漏判。
 - `_format_wire_declaration()` 混合宽度选择、对齐和最终声明拼接。
-- `VerilogParser` 跨多次调用复用是否安全仍需审计。
+- `except Exception` 仍包装为 `VCGRuntimeError`，需要与全仓异常纪律一致。
 
-建议先做低风险止血：`_is_multi_dimensional()` 改正则、拆声明格式化；ADT 化宽度应单独评估，因为会影响 AST/RuleManager 契约。
+建议范围：
 
-### 8. `src/VerilogLexer.py`
+- 先拆 `_resolve_width_text()`、`_format_spacing()`、`_render_wire_declaration()`。
+- `_is_multi_dimensional()` 改为基于 bracket pair 计数或正则，覆盖空格形式。
+- 保持现有输出格式和 `set_base_spacing()` / `get_base_spacing()` API。
+- 宽度 ADT 化单独评估，不要和低风险清理混在同一个 TASK。
 
-已清理一轮，但 review 中仍有未落地项：
+## P1：Parser/Lexer 收尾
 
-- 是否真正 raise `VCGSyntaxError` 需要核对并补测试。
-- `ID` 规则是否仍把 `` ` `` / `$` 当普通标识符，需决定是否拆 `MACRO_REF` / `SYSTEM_TASK`。
-- 关键字表是否仍存在“两份真相”需要继续收敛。
-- `build()` / `input()` / `token()` 的 lazy build 与类型注解还可清理。
+### TASK-09 候选：`src/VerilogLexer.py`
 
-建议先不要和 Preprocess 同时改宏相关 token，否则边界会互相牵连。
+Lexer 已做过字符串转义和死代码清理，但还没有完整收敛 token 策略。
+
+剩余问题：
+
+- 是否应该抛 `VCGSyntaxError` 仍需确认，目前更多是返回 lexer token / parser 统一处理。
+- `ID` 规则对反引号宏、`$system_task` 的边界需要重新明确。
+- 关键字表和 token 列表是否仍存在重复真相，需要继续收敛。
+- `build()` / `input()` / `token()` 的 lazy build 行为和类型注解可进一步清理。
+
+建议先写架构任务单，明确宏和 system task 是 Lexer 责任、Preprocess 责任，还是 Parser 责任。
+
+### TASK-10 候选：`src/VerilogParser.py`
+
+Parser 已经完成 silent failure 的一轮结构性修复，当前不建议做大重构，只做异常语义收尾。
+
+剩余问题：
+
+- `parse_string()` 仍有未知异常包装为 `VCGParseError` 的兜底，需要确认是否所有 VCG 子类都透传。
+- 当前很多语法错误仍归入 `VCGParseError`，是否改为 `VCGSyntaxError` 需要和 Lexer 一起决策。
+- 旧 `typing.Optional/Dict/List` 风格可以后续顺手清理，但不是单独重构理由。
+
+建议与 TASK-09 绑定或排在其后。
 
 ## P2：横切清理项
 
-### 9. `src/vcg_exceptions.py`
+### 全仓异常处理统一
 
-异常层级仍只是 5 个空类：
+当前仍可搜到 `except Exception`，但不是所有兜底都要删除。每个模块重构时采用同一纪律：
 
-- 没有 `message` / `path` / `lineno` 等结构化字段。
-- `VCGSyntaxError` 当前主要是 import，实际 raise 使用不足。
-- 缺 `__all__` 和类 docstring。
-- 仍缺测试约束“不要直接 raise VCGError 父类”。
+- VCG 子类直接透传。
+- 未知异常包装时必须 `raise ... from e`。
+- 不把运行时错误伪装成 parse/file error。
+- CLI 顶层兜底可以保留，但需要拼写、日志和 debug traceback 策略。
 
-建议在 CLI/FileProcessor/Preprocess 重构前先做最小增强：保持构造兼容，新增可选结构化字段。
+### 类型注解现代化
 
-### 10. 全仓异常处理统一
+部分模块仍使用 `typing.List/Dict/Optional/Tuple`。这不单独构成重构任务，但在修改模块时应顺手改为：
 
-当前仍可搜到多处 `except Exception`。并非全部都必须删除，但需要逐处分类：
+- `list[T]`
+- `dict[K, V]`
+- `T | None`
+- `tuple[...]`
 
-- 应直接透传：`VCGFileError` / `VCGParseError` / `VCGSyntaxError` / `VCGRuntimeError`。
-- 包装未知异常时必须 `raise ... from e`。
-- 不应把运行时错误伪装成 parse/file error。
+### Backlog 文档维护
 
-建议作为每个模块重构的验收标准，而不是单独大扫除。
+本文件已经取代旧版“P0 仍是 file_processor/preprocess/execution_engine”的判断。后续每完成一个 TASK，应同步更新：
 
-### 11. 类型注解、未用 import、源文件调试入口
-
-剩余模块里还有 `typing.List/Dict/Optional/Tuple` 旧风格、未用 import、源文件尾部 `__main__` 调试入口等问题。优先级低于行为重构，但每个模块改到时应顺手清掉。
+- 已完成模块表。
+- P0/P1 顺序。
+- 是否存在待提交但未提交的 TASK。
 
 ## 建议执行顺序
 
-1. `vcg_file_processor.py`：先拆掉 `os.chdir()` 和注入状态机。
-2. `VerilogPreprocess.py`：先做方向决策，再写 TASK；不要盲目补丁。
-3. `vcg_execution_engine.py`：清异常、输出管理器和 DSL 闭包工厂。
-4. `vcg.py`：CLI 数据契约和错误处理。
-5. `vcg_instance_manager.py` / `vcg_wires_manager.py`：分别收敛数据结构和渲染。
-6. `VerilogLexer.py`：宏/system-task token 与 syntax error 策略。
-7. `vcg_exceptions.py`：结构化字段和异常纪律测试。
+1. TASK-07：`src/vcg_instance_manager.py` 结构化连接数据 + 渲染清理。
+2. TASK-08：`src/vcg_wires_manager.py` 宽度格式化拆分 + 多维识别修正。
+3. TASK-09：`src/VerilogLexer.py` token/`VCGSyntaxError` 策略。
+4. TASK-10：`src/VerilogParser.py` 异常语义收尾。

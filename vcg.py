@@ -21,38 +21,35 @@ along with VCG.  If not, see <https://www.gnu.org/licenses/>.
 # Author: cxhy
 # Created: 2025-07-31
 # Description:
-"""
-VCG (Verilog Code Generator)
-"""
-
-import sys
 import argparse
+import sys
 from pathlib import Path
-from src.vcg_file_processor import VCGFileProcessor
-from src.vcg_exceptions import VCGError
-from src.vcg_logger import setup_vcg_logging, get_vcg_logger
 
-def parse_macros_argument(macros_str: str):
-    if not macros_str:
+from src.vcg_file_processor import VCGFileProcessor
+from src.vcg_exceptions import VCGError, VCGFileError
+from src.vcg_logger import get_vcg_logger, setup_vcg_logging
+
+
+def parse_macros_argument(macros_str: str | None) -> dict[str, str] | None:
+    if macros_str is None or not macros_str.strip():
         return None
 
-    macros_list = [macro.strip() for macro in macros_str.split(',')]
+    macros: dict[str, str] = {}
+    for macro in macros_str.split(','):
+        macro = macro.strip()
+        if not macro:
+            continue
 
-    has_assignment = any('=' in macro for macro in macros_list)
+        if '=' in macro:
+            key, value = macro.split('=', 1)
+            macros[key.strip()] = value.strip()
+        else:
+            macros[macro] = ""
 
-    if has_assignment:
-        macros_dict = {}
-        for macro in macros_list:
-            if '=' in macro:
-                key, value = macro.split('=', 1)
-                macros_dict[key.strip()] = value.strip()
-            else:
-                macros_dict[macro] = ""
-        return macros_dict
-    else:
-        return macros_list
+    return macros or None
 
-def main():
+
+def _create_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description='VCG - Verilog Code Generator')
     parser.add_argument('file', help='Verilog Path')
     parser.add_argument('--debug', action='store_true', help='Debug Mode')
@@ -60,45 +57,63 @@ def main():
     log_group = parser.add_argument_group('Logging Options')
     log_group.add_argument('--log-level',
                           choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
-                          default='WARNING',
+                          default=None,
                           help='Set logging level (default: WARNING)')
     log_group.add_argument('--log-file', type=str,
                           help='Write logs to file')
     log_group.add_argument('--quiet', action='store_true',
                           help='Quiet mode: only show errors on console')
+    return parser
 
 
-    args = parser.parse_args()
+def _resolve_log_level(debug: bool, log_level: str | None) -> str:
+    if log_level is not None:
+        return log_level
+    if debug:
+        return 'DEBUG'
+    return 'WARNING'
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _create_arg_parser()
+    args = parser.parse_args(argv)
+    log_level = _resolve_log_level(args.debug, args.log_level)
+    logger = None
 
     try:
-        file_path = Path(args.file)
-        if not file_path.exists():
-            raise VCGError(f"File Missing: {file_path}")
-
         setup_vcg_logging(
-            level=args.log_level,
+            level=log_level,
             log_file=args.log_file,
             quiet=args.quiet
         )
 
         logger = get_vcg_logger('Main')
-        logger.info(f"Starting VCG with log level: {args.log_level}")
+        logger.info(f"Starting VCG with log level: {log_level}")
 
+        file_path = Path(args.file)
+        if not file_path.exists():
+            raise VCGFileError("File missing", path=file_path)
 
-        macros = parse_macros_argument(args.macros) if args.macros else None
+        macros = parse_macros_argument(args.macros)
 
         processor = VCGFileProcessor(macros=macros)
         processor.process_file(file_path)
         logger.info("VCG generation completed successfully")
 
-        print(f"VCG generate Done: {file_path}")
+        print(f"VCG generation done: {file_path}")
+        return 0
 
     except VCGError as e:
+        if logger is not None:
+            logger.error(f"VCG Error: {e}")
         print(f"VCG Error: {e}", file=sys.stderr)
-        sys.exit(1)
+        return 1
     except Exception as e:
-        print(f"Unknow Error: {e}", file=sys.stderr)
-        sys.exit(1)
+        if logger is not None and log_level == 'DEBUG':
+            logger.exception("Unknown CLI error")
+        print(f"Unknown Error: {e}", file=sys.stderr)
+        return 1
+
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
