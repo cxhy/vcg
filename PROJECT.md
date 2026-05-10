@@ -64,11 +64,36 @@ Verilog 文件 → VCGFileProcessor 提取 //VCG_BEGIN...//VCG_END 块
 
 ### Parser 管线
 
-- **VerilogPreprocess**: 宏展开 + 去除 module 前内容
-- **VerilogLexer**: PLY 词法分析, 支持 Verilog 数字格式 (含下划线分隔)
-- **VerilogParser**: PLY yacc, 同时支持 Verilog-1995 (body 声明) 和 Verilog-2001 (ANSI header)
-- **VerilogASTBuilder**: Builder 模式积累 PortDeclaration, `build()` 时通过 PortFactory 转为 PortInfo
-- **ExpressionCalculator**: 用 sympy 计算参数化宽度表达式, 失败时回退为字符串
+当前 Verilog 前端保留 `VerilogLexer` / `VerilogParser` / `VerilogAst` /
+`VerilogPreprocess` 命名，因为这些模块长期上允许扩展为更完整的
+Verilog/SystemVerilog 解析器。但当前实现的稳定目标不是完整编译器，而是
+目标 module 的 module-level declaration 子集解析。
+
+- **VerilogPreprocess**: 在整文件范围处理条件编译和宏上下文，定位目标
+  module，并向 Parser 提供该 module 的声明相关文本。预处理阶段不能先裁掉
+  module 前上下文再处理条件编译。
+- **VerilogLexer**: PLY 词法分析。当前服务于 module-level declaration
+  子集；声明区域内的词法错误必须进入结构化错误通道。
+- **VerilogParser**: PLY yacc。当前支持 Verilog-1995 body 声明、
+  Verilog-2001 ANSI header、header/body 中的 `parameter` / `localparam`、
+  端口声明，以及表达式子集。非声明型 body item 可以被跳过，但不能被误建模
+  为 AST。
+- **VerilogASTBuilder**: Builder 模式积累 `PortDeclaration` /
+  `ParameterInfo`，`build()` 时通过 `PortFactory` 转为 `PortInfo`。
+- **ExpressionCalculator**: 用 sympy 计算参数化宽度表达式，无法安全化简时
+  回退为字符串，不能静默损失 Verilog 源码语义。
+- **verilog.bnf**: 当前支持子集的语法规范文件。它必须和
+  `VerilogParser.py` 同步维护，不能作为历史草稿长期漂移。
+
+当前解析范围的核心边界：
+
+- 必须解析目标 module 的 header 参数、ANSI/V95 端口、body 内
+  `parameter` / `localparam`、body 内端口声明。
+- 必须为未来 SystemVerilog 的 data type、interface port、modport、
+  packed/unpacked dimensions 预留数据模型扩展点。
+- 暂不实现的 body 语句（如 `assign`、instance、always、generate）可以在
+  不影响声明提取时跳过；如果出现在声明区域或破坏声明边界，必须失败。
+- 发现 lexer/parser/preprocess 错误时不能返回看似成功的 AST。
 
 ### 规则系统
 
@@ -195,3 +220,83 @@ Verilog 文件 → VCGFileProcessor 提取 //VCG_BEGIN...//VCG_END 块
 - examples/dma_system.v byte-for-byte 等价（md5 `bdbf98cf...`, cmp exit 0）
 - 下游 VerilogParser / InstanceManager / WiresManager / RuleManager 0 改动
 - 对外 API 22/22 签名语义等价
+
+### 2026-05-10: Verilog 前端当前解析边界与长期命名策略
+
+**背景**: 新一轮 Linus 风格 review 指出 `VerilogLexer.py` /
+`VerilogParser.py` / `VerilogPreprocess.py` 存在错误边界、预处理顺序和声明
+建模问题。讨论确认这些问题部分来自早期设计取舍：VCG 当前只需要从目标
+module 提取参数和端口，因此有意忽略大量完整 Verilog 语法。但这种简化没有
+被清楚表达在架构和 BNF 中，导致代码一边跳过语法，一边又像完整 parser 一样
+返回 AST。
+
+**决策 13: 保留 `Verilog*` 命名，不改成 interface-only 命名**
+- `VerilogLexer` / `VerilogParser` / `VerilogAst` / `VerilogPreprocess`
+  名字继续保留。
+- 理由：项目未来可能实现更完整的 Verilog/SystemVerilog parser。当前不通过
+  改名收窄长期方向，而是在文档和实现契约中标明“当前支持子集”。
+
+**决策 14: 当前稳定目标是 module-level declaration 子集**
+- 当前必须解析：
+  - 目标 module 的 header parameter / localparam。
+  - Verilog-2001 ANSI header 端口声明。
+  - Verilog-1995 body 端口声明。
+  - module body 内的 `parameter` / `localparam`。
+  - 宽度表达式、参数默认值、端口 range 所需的表达式子集。
+- 当前可以跳过但不建 AST：
+  - `assign`
+  - module instance
+  - `always`
+  - `generate`
+  - 其他非声明型 body item
+- 理由：body 内参数会影响端口宽度和下游生成，不能简单丢弃；但非声明型
+  body item 不是 VCG 当前输出所需数据，不应逼迫当前 parser 支持完整语义。
+
+**决策 15: 预处理必须先保留整文件上下文，再选择目标 module**
+- `VerilogPreprocess` 长期方向是：整文件条件编译/宏上下文处理 →
+  目标 module 定位 → 声明相关文本抽取。
+- 不接受“先裁掉 module 前文本，再做条件编译”的数据流。
+- 理由：module 前的 ``define``、include guard、条件编译指令属于解析目标
+  module 的必要上下文，提前丢弃会污染 AST。
+
+**决策 16: 声明建模要使用 declaration group 思路，并为 SV 预留字段**
+- 端口和参数声明不能把每个逗号分隔项都当作完整独立声明。例如
+  `input [7:0] a, b` 和 `parameter A = 1, B = 2` 必须共享声明上下文。
+- 数据模型应支持“声明属性 + declarator list”的结构，字段至少要考虑：
+  direction、net/data type、packed dimensions、unpacked dimensions、
+  interface type、modport、signedness、default value。
+- 理由：这同时修复当前 ANSI 多端口继承问题，并为 SystemVerilog 的
+  `logic signed [W-1:0] a, b`、`axi_if.master m_axi` 等语法预留扩展点。
+
+**决策 17: `src/verilog.bnf` 是当前支持子集规范，不是草稿**
+- `verilog.bnf` 必须清理重复和过期规则，并与 `VerilogParser.py` 同步。
+- 对暂不支持但未来计划支持的 Verilog/SystemVerilog 语法，应在 BNF 中标记为
+  future/unsupported，而不是混在当前 grammar 里。
+- 理由：BNF 是后续架构、实现和测试任务的共同依据。如果它和代码漂移，
+  review 和任务拆解会反复争论同一个基础边界。
+
+**决策 18: 简化实现必须 fail loud，不能 silent corruption**
+- 当前子集内无法正确解析时，必须抛出 `VCGParseError` 或更具体的 VCG 异常。
+- 如果 lexer/parser/preprocess 已记录错误，不能返回看似成功的 AST。
+- 理由：VCG 的下游会基于 AST 生成 Verilog。错误输入生成“格式正确但语义错误”
+  的 instance/wire，比早失败更危险。
+
+**决策 19: include/import 文件发现必须通过显式搜索根**
+- Verilog ``include`` 是预处理期文本包含；SystemVerilog `import` 是语法和名字解析
+  metadata。二者不能共用语义，也不能把 `import` 当成 include 展开。
+- 未来支持 include 时，调用方必须显式传入 `include_roots`，由 include resolver
+  搜索文件、处理相对路径、循环 include、最大深度和 source location 映射。
+- 未来支持 SystemVerilog package import 时，调用方必须显式传入 `package_roots`
+  或 package index，由 import/package resolver 按 package 名查找定义。
+- 不允许从 cwd、工程根目录或环境状态隐式猜搜索路径；多个候选命中必须报
+  ambiguity error。
+- 理由：VCG 会被嵌入不同工程和工作目录中。隐式搜索路径会让同一输入在不同目录下
+  解析出不同 AST，比暂时不支持 include/import 更危险。
+
+**对后续任务的约束**:
+- Parser 管线重构任务必须先引用本决策，再定义具体 task 范围。
+- 不以“完整 Verilog parser”为近期验收目标。
+- 不删除 body parameter/localparam 支持。
+- 不为短期修复重命名 `Verilog*` 模块。
+- 不为 include/import 支持引入隐式文件搜索路径。
+- 修改 parser grammar 时必须同步检查并更新 `src/verilog.bnf`。

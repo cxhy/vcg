@@ -733,6 +733,191 @@ endmodule"""
             vp.preprocess_file("nonexistent_12345.v")
 
 
+class TestTask09PreprocessRefactorBehavior:
+    """TASK-09: 整文件上下文、目标 module 和声明抽取行为"""
+
+    def test_define_before_module_controls_inside_ifdef(self):
+        code = """`define ENABLE
+module m;
+`ifdef ENABLE
+  input en;
+`endif
+endmodule"""
+        vp = VerilogPreprocess()
+        result = vp.preprocess_string(code)
+        assert "input en;" in result
+
+    def test_include_guard_wrapping_module_is_supported_without_orphan_endif(self):
+        code = """`ifndef M_V
+`define M_V
+module m;
+  input clk;
+endmodule
+`endif"""
+        vp = VerilogPreprocess()
+        result = vp.preprocess_string(code)
+        assert "module m;" in result
+        assert "input clk;" in result
+        assert "endmodule" in result
+
+    def test_value_macro_reference_is_preserved_in_width_expression(self):
+        code = """module m;
+  input [`WIDTH-1:0] data;
+endmodule"""
+        vp = VerilogPreprocess({"WIDTH": "32"})
+        result = vp.preprocess_string(code)
+        assert "`WIDTH-1:0" in result
+        assert "32-1:0" not in result
+
+    def test_macro_value_is_not_expanded_in_parameter_default(self):
+        code = """module m;
+  parameter DEPTH = `DEPTH_DEFAULT;
+endmodule"""
+        vp = VerilogPreprocess({"DEPTH_DEFAULT": "1024"})
+        result = vp.preprocess_string(code)
+        assert "parameter DEPTH = `DEPTH_DEFAULT;" in result
+        assert "1024" not in result
+
+    def test_string_comment_markers_do_not_start_comments(self):
+        code = """module m;
+  parameter URL = "http://example";
+  input clk;
+endmodule"""
+        vp = VerilogPreprocess()
+        result = vp.preprocess_string(code)
+        assert 'parameter URL = "http://example";' in result
+        assert "input clk;" in result
+
+    def test_string_semicolon_does_not_end_declaration_scan_early(self):
+        code = """module m;
+  parameter TEXT = "a;b"
+    ;
+  input clk;
+endmodule"""
+        vp = VerilogPreprocess()
+        result = vp.preprocess_string(code)
+        assert 'parameter TEXT = "a;b"\n    ;' in result
+        assert "input clk;" in result
+
+    def test_multi_module_defaults_to_first_active_module_for_backward_compat(self):
+        code = """module first;
+  input a;
+endmodule
+
+module second;
+  input b;
+endmodule"""
+        vp = VerilogPreprocess()
+        result = vp.preprocess_string(code)
+        assert "module first;" in result
+        assert "input a;" in result
+        assert "module second;" not in result
+        assert "input b;" not in result
+
+    def test_target_module_selects_second_module_if_optional_arg_implemented(self):
+        code = """module first;
+  input a;
+endmodule
+
+module second;
+  input b;
+endmodule"""
+        vp = VerilogPreprocess()
+        result = vp.preprocess_string(code, target_module="second")
+        assert "module second;" in result
+        assert "input b;" in result
+        assert "module first;" not in result
+        assert "input a;" not in result
+
+    def test_target_module_missing_raises_parse_error_if_optional_arg_implemented(self):
+        code = """module first;
+  input a;
+endmodule"""
+        vp = VerilogPreprocess()
+        with pytest.raises(VCGParseError):
+            vp.preprocess_string(code, target_module="missing")
+
+    def test_non_declaration_body_items_are_ignored_not_output(self):
+        code = """module m(input clk);
+  assign x = clk;
+  child u0 (.clk(clk));
+  input late_decl;
+endmodule"""
+        vp = VerilogPreprocess()
+        result = vp.preprocess_string(code)
+        assert "input late_decl;" in result
+        assert "assign x" not in result
+        assert "child u0" not in result
+
+    def test_unsupported_directive_inside_extracted_declaration_raises_parse_error(self):
+        code = """module m;
+  `timescale 1ns/1ps
+  input clk;
+endmodule"""
+        vp = VerilogPreprocess()
+        with pytest.raises(VCGParseError):
+            vp.preprocess_string(code)
+
+    def test_clear_macros_return_type_and_behavior(self):
+        vp = VerilogPreprocess({"ENABLE": "1"})
+        result = vp.clear_macros()
+        assert result is None
+        assert vp.get_macros() == {}
+
+    def test_include_outside_target_declaration_is_dropped(self):
+        code = """`include "defs.vh"
+module m;
+  input clk;
+endmodule"""
+        vp = VerilogPreprocess()
+        result = vp.preprocess_string(code)
+        assert "`include" not in result
+        assert "input clk;" in result
+
+    def test_include_inside_target_declaration_raises_parse_error(self):
+        code = """module m;
+  `include "ports.vh"
+  input clk;
+endmodule"""
+        vp = VerilogPreprocess()
+        with pytest.raises(VCGParseError):
+            vp.preprocess_string(code)
+
+    def test_duplicate_target_module_raises_parse_error(self):
+        code = """module dup;
+  input a;
+endmodule
+
+module dup;
+  input b;
+endmodule"""
+        vp = VerilogPreprocess()
+        with pytest.raises(VCGParseError):
+            vp.preprocess_string(code, target_module="dup")
+
+    def test_inactive_include_inside_module_is_ignored(self):
+        code = """module m;
+`ifdef NEVER
+  `include "ports.vh"
+`endif
+  input clk;
+endmodule"""
+        vp = VerilogPreprocess()
+        result = vp.preprocess_string(code)
+        assert "`include" not in result
+        assert "input clk;" in result
+
+    def test_string_endmodule_does_not_terminate_inline_module(self):
+        code = """module m;
+  parameter TEXT = "not an endmodule token";
+  input clk;
+endmodule"""
+        vp = VerilogPreprocess()
+        result = vp.preprocess_string(code)
+        assert 'parameter TEXT = "not an endmodule token";' in result
+        assert "input clk;" in result
+
+
 # ============================================================================
 # 4. 边界条件测试
 # ============================================================================

@@ -1,302 +1,578 @@
-design_unit ::= module_declaration| empty
+# VCG Verilog Frontend Grammar
 
-module_declaration ::= MODULE module_name opt_parameter_list opt_port_list SEMICOLON module_item_list ENDMODULE
-                     | MODULE module_name error ENDMODULE
+Status: current supported subset and near-term refactor target.
+Scope: target module module-level declarations used by VCG instance/wire
+generation.
 
-module_name ::= ID
+This file is normative for `VerilogPreprocess.py`, `VerilogLexer.py`,
+`VerilogParser.py`, and `VerilogAst.py`. It is not a complete Verilog or
+SystemVerilog grammar.
 
-
-<opt_parameter_list> ::= HASH LPAREN <parameter_declaration_list> RPAREN
-                       | HASH LPAREN error RPAREN
-                       | <empty>
-
-<opt_parameter_list> ::= HASH LPAREN <parameter_declaration_list> RPAREN
-                       | HASH LPAREN error RPAREN
-                       | <empty>
-
-<parameter_declaration_list> ::= <parameter_declaration>
-                               | <parameter_declaration_list> COMMA <parameter_declaration>
-
-<parameter_declaration> ::= PARAMETER <param_assignment>
-                          | LOCALPARAM <param_assignment>
-                          | PARAMETER error
-                          | LOCALPARAM error
-
-<param_assignment> ::= ID EQUALS <expression>
-                     | ID EQUALS error
-
-<opt_port_list> ::= LPAREN <port_list> RPAREN
-                  | LPAREN RPAREN
-                  | LPAREN error RPAREN
-                  | <empty>
-
-<port_list> ::= <port_declaration>
-              | <port_list> COMMA <port_declaration>
-
-<port_declaration> ::= <opt_port_direction> <opt_net_or_reg_type> <opt_packed_dimension> <port_identifier>
-                     | error
-
-<opt_port_direction> ::= INPUT
-                       | OUTPUT
-                       | INOUT
-                       |<empty>
-
-<opt_net_or_reg_type> ::= WIRE
-                        | REG
-                        | LOGIC
-                        | <empty>
-
-<opt_packed_dimension> ::= LBRACKET <expression> COLON <expression> RBRACKET
-                | LBRACKET error RBRACKET
-                         | <empty>
-
-<port_identifier> ::= ID
-
-<module_item_list> ::= <empty>
-                     | <module_item_list> <module_item>
-                     | <module_item>     
-                     | <module_item_list> error SEMICOLON
-
-<module_item> ::= <module_item_declaration>
-                | <module_item_assignment>
-                | <module_item_always>
-                | <module_item_instance>
-
-<module_item_declaration> ::= INPUT <opt_net_or_reg_type> <opt_packed_dimension> <port_identifier> SEMICOLON
-                            | OUTPUT <opt_net_or_reg_type> <opt_packed_dimension> <port_identifier> SEMICOLON
-                            | INOUT <opt_net_or_reg_type> <opt_packed_dimension> <port_identifier> SEMICOLON
-                            | WIRE <opt_packed_dimension> <port_identifier> SEMICOLON
-                            | REG <opt_packed_dimension> <port_identifier> SEMICOLON
-                            | LOGIC <opt_packed_dimension> <port_identifier> SEMICOLON
-                            | PARAMETER <module_parameter_assignment_list> SEMICOLON
-                            | LOCALPARAM <module_parameter_assignment_list> SEMICOLON
-
-<module_parameter_assignment_list> ::= <param_assignment>
-                                     | <module_parameter_assignment_list> COMMA <param_assignment>
+Related long-term decision: `PROJECT.md` decisions 13-18.
 
 
-<module_item_assignment> ::= ASSIGN <expression> EQUALS <expression> SEMICOLON
+===============================================================================
+1. Frontend Scope
+===============================================================================
 
-<module_item_always> ::= ALWAYS <expression> BEGIN <expression_list> END
+The `Verilog*` module names are intentionally kept because this frontend may
+grow into a fuller Verilog/SystemVerilog parser later. The current stable
+contract is narrower:
 
-<module_item_instance> ::= ID ID LPAREN <expression_list> RPAREN SEMICOLON
+- Parse the target module name.
+- Parse header `parameter` / `localparam` declarations.
+- Parse Verilog-2001 ANSI port declarations.
+- Parse Verilog-1995 port names plus body port declarations.
+- Parse module body `parameter` / `localparam` declarations.
+- Preserve expressions needed by parameter defaults and port ranges.
+- Build AST data for parameters and ports only.
 
-
-<expression> ::= <primary>| PLUS <expression>
-               | MINUS <expression>
-               | NOT <expression>
-               | LNOT <expression>
-               | <expression> PLUS <expression>
-               | <expression> MINUS <expression>
-               | <expression> TIMES <expression>
-               | <expression> DIVIDE <expression>
-               | <expression> MOD <expression>
-               | <expression> POWER <expression>
-               | <expression> LT <expression>
-               | <expression> GT <expression>
-               | <expression> LE <expression>
-               | <expression> GE <expression>
-               | <expression> EQ <expression>
-               | <expression> NE <expression>
-               | <expression> LAND <expression>
-               | <expression> LOR <expression>
-               | <expression> AND <expression>
-               | <expression> OR <expression>
-               | <expression> XOR <expression>
-               | <expression> XNOR <expression>
-               | <expression> LSHIFT <expression>
-               | <expression> RSHIFT <expression>
-               | <expression> COND <expression> COLON <expression>
-               | LPAREN <expression> RPAREN
-               |<concatenation>
-
-<primary> ::= INTNUMBER_DEC
-            | INTNUMBER_HEX
-            | INTNUMBER_OCT
-            | INTNUMBER_BIN
-            | ID
-            | STRING_LITERAL
-            | ID LBRACKET <expression> RBRACKET
-            | ID LBRACKET error RBRACKET
-            | ID LBRACKET <expression> COLON <expression> RBRACKET
-            | ID LBRACKET error COLON error RBRACKET
-            | PLUS INTNUMBER_DEC
-            | PLUS INTNUMBER_HEX
-            | PLUS INTNUMBER_OCT
-            | PLUS INTNUMBER_BIN
-            | MINUS INTNUMBER_DEC
-            | MINUS INTNUMBER_HEX
-            | MINUS INTNUMBER_OCT
-            | MINUS INTNUMBER_BIN
-            | ID LPAREN <expression_list> RPAREN
-
-<concatenation> ::= LBRACE <expression_list> RBRACE
-                  | LBRACE error RBRACE
-
-<expression_list> ::= <expression>| <expression_list> COMMA <expression>
-
-<empty> ::= ε
-
-操作符优先级（从低到高）
-条件操作符: COND, COLON (右结合)
-逻辑或: LOR (左结合)
-逻辑与: LAND (左结合)
-按位或: OR (左结合)
-按位异或: XOR, XNOR (左结合)
-按位与: AND (左结合)
-相等比较: EQ, NE (左结合)
-关系比较: LT, GT, LE, GE (左结合)
-移位: LSHIFT, RSHIFT (左结合)
-加减: PLUS, MINUS (左结合)
-乘除模: TIMES, DIVIDE, MOD (左结合)
-幂运算: POWER (右结合)
-一元操作: UMINUS, UPLUS, UNOT (右结合)
+The current frontend does not build AST nodes for full module behavior.
+Non-declaration body items may be skipped only when they do not affect module
+declaration extraction.
 
 
+===============================================================================
+2. Partial Preprocessing Contract
+===============================================================================
+
+VCG passes a macro environment into the Verilog frontend. This frontend performs
+partial preprocessing for module declaration extraction, not full Verilog
+preprocessing.
+
+2.1 Structural preprocessing directives
+
+These directives are supported for code slicing and target-module extraction:
+
+    `ifdef
+    `ifndef
+    `elsif
+    `else
+    `endif
+    `define
+    `undef
+
+Rules:
+
+- Conditional directives are evaluated on the whole source file before target
+  module extraction.
+- Inactive conditional branches are removed from the parser input.
+- Active `define` / `undef` directives update the macro environment for later
+  conditional directives.
+- Preprocessor directive lines are not passed to the parser as Verilog syntax.
+- Original line information should be preserved for diagnostics where possible.
+
+2.2 Value-like macro references
+
+Object-like macro references used in declaration expressions are preserved.
+They are not expanded to their values by this partial preprocessor.
+
+Examples that must be preserved in parser-visible declaration text:
+
+    input [`WIDTH-1:0] data
+    parameter DEPTH = `DEPTH_DEFAULT
+    localparam ADDR_W = $clog2(`DEPTH)
+
+Rationale:
+
+- Width and parameter macros often intentionally remain symbolic in generated
+  Verilog.
+- The same VCG macro environment can be used for conditional slicing by name
+  while preserving expression references by spelling.
+- This frontend is not a full macro expander.
+
+2.3 Unsupported preprocessing features
+
+Unsupported in the current subset:
+
+    `include
+    `line
+    `timescale
+    `default_nettype
+    function-like macro expansion
+    token pasting
+    stringification
+    nested macro expansion semantics
+
+Unsupported directives inside the extracted declaration subset are parse
+errors. Unsupported directives outside the extracted target-module declaration
+subset may be ignored only if target module selection and declaration
+extraction remain unambiguous.
+
+Current `include` policy:
+
+- The current frontend does not open or expand include files.
+- An active `include` line may be dropped only when it is outside the extracted
+  target-module declaration text.
+- An active `include` inside the selected module header or body declaration
+  subset is an error, because the included text may contain ports, parameters,
+  macros, or declarations required to build a correct AST.
+- Macros that would normally come from included header files must be supplied
+  through the VCG macro environment if they affect conditional slicing.
+- Future include support must be a separate preprocessing task with explicit
+  include-path resolution, caller-provided include roots, cycle detection,
+  depth limits, file error handling, and original source location mapping.
+- Include file lookup must not guess the process cwd or project root. Future
+  resolver behavior must be driven by explicit include roots and documented
+  search order.
+- Multiple matching include files are an ambiguity error, not a reason to pick
+  the first filesystem result.
+
+Comment handling for directive detection must distinguish code, line comments,
+block comments, and string literals. Comment markers inside string literals are
+not comments.
 
 
+===============================================================================
+3. Supported Tokens
+===============================================================================
+
+3.1 Keywords
+
+Current supported keyword tokens:
+
+    MODULE        ::= "module"
+    ENDMODULE     ::= "endmodule"
+    INPUT         ::= "input"
+    OUTPUT        ::= "output"
+    INOUT         ::= "inout"
+    WIRE          ::= "wire"
+    REG           ::= "reg"
+    LOGIC         ::= "logic"
+    PARAMETER     ::= "parameter"
+    LOCALPARAM    ::= "localparam"
+    ASSIGN        ::= "assign"
+
+Notes:
+
+- `logic` is accepted as a current declaration type token, but broader
+  SystemVerilog data type semantics are future work.
+- Keyword matching is case-sensitive. Verilog identifiers are case-sensitive.
+
+3.2 Identifiers
+
+Current supported identifier classes:
+
+    ID            ::= simple Verilog identifier
+    SYSTEM_ID     ::= "$" identifier body
+    MACRO_ID      ::= "`" identifier body
+
+Required spelling model:
+
+    ID body       ::= [A-Za-z_][A-Za-z0-9_$]*
+    SYSTEM_ID     ::= "$" [A-Za-z_][A-Za-z0-9_$]*
+    MACRO_ID      ::= "`" [A-Za-z_][A-Za-z0-9_$]*
+
+Current/future boundary:
+
+- Simple identifiers are supported.
+- System identifiers are supported only as expression function names, for
+  examples `$clog2(...)`.
+- Object-like macro references are supported as preserved expression atoms.
+- Escaped identifiers are unsupported in the current subset and reserved for
+  future work.
+
+Unsupported current identifiers:
+
+    escaped identifier: \foo.bar<space>
+    hierarchical name: top.u0.sig
+    package scope: pkg::name
+    class scope: cls::name
+
+3.3 Numeric literals
+
+Current target support:
+
+    DEC_NUMBER    ::= decimal number with optional underscores
+    BASED_NUMBER  ::= optional size, optional signed marker, base, digits
+
+Examples:
+
+    42
+    1_024
+    8'hff
+    8'HFF
+    8'shff
+    4'b10xz
+    'd10
+
+Based number requirements:
+
+- Base markers are case-insensitive: b/B, o/O, d/D, h/H.
+- Optional signed marker is supported: s/S.
+- Binary digits may include 0, 1, x, X, z, Z, ?.
+- Octal digits may include 0-7, x, X, z, Z, ?.
+- Decimal digits may include 0-9, x, X, z, Z, ?.
+- Hex digits may include 0-9, a-f, A-F, x, X, z, Z, ?.
+- Underscores are allowed between digits.
+
+Unsupported numeric literals:
+
+    real numbers
+    time literals
+    strength literals
+
+3.4 String literals
+
+    STRING_LITERAL ::= double-quoted Verilog string spelling
+
+The lexer/parser should preserve enough information to distinguish a string
+literal from an identifier-like value. Full escape decoding is not required for
+VCG width/port extraction.
+
+3.5 Operators and punctuation
+
+Supported expression operators:
+
+    PLUS          ::= "+"
+    MINUS         ::= "-"
+    POWER         ::= "**"
+    TIMES         ::= "*"
+    DIVIDE        ::= "/"
+    MOD           ::= "%"
+    NOT           ::= "~"
+    OR            ::= "|"
+    AND           ::= "&"
+    XOR           ::= "^"
+    XNOR          ::= "^~" | "~^"
+    LOR           ::= "||"
+    LAND          ::= "&&"
+    LNOT          ::= "!"
+    LSHIFT        ::= "<<"
+    RSHIFT        ::= ">>"
+    LT            ::= "<"
+    GT            ::= ">"
+    LE            ::= "<="
+    GE            ::= ">="
+    EQ            ::= "=="
+    NE            ::= "!="
+    COND          ::= "?"
+    EQUALS        ::= "="
+
+Supported punctuation:
+
+    COMMA         ::= ","
+    COLON         ::= ":"
+    SEMICOLON     ::= ";"
+    LPAREN        ::= "("
+    RPAREN        ::= ")"
+    LBRACKET      ::= "["
+    RBRACKET      ::= "]"
+    LBRACE        ::= "{"
+    RBRACE        ::= "}"
+    HASH          ::= "#"
+
+3.6 Unsupported current tokens
+
+These are not part of the current supported subset:
+
+    DOT           ::= "."
+    AT            ::= "@"
+    DOUBLE_COLON  ::= "::"
+    ARROW         ::= "->"
+    procedural keywords: always, always_comb, always_ff, initial, begin, end
+    generate keywords: generate, endgenerate, genvar, for, if, case
+    signedness keywords: signed, unsigned
+    interface keywords: interface, endinterface, modport
+    package/class/import keywords: package, endpackage, class, endclass, import
+    typedef/aggregate keywords: typedef, struct, union, enum
+    task/function keywords: task, endtask, function, endfunction
+
+These may be added later, but they must not be mixed into the current grammar
+without explicit task scope and tests.
 
 
+===============================================================================
+4. Grammar: Current Supported Subset
+===============================================================================
+
+Notation:
+
+    X?       optional X
+    X*       zero or more X
+    X+       one or more X
+    A | B    alternatives
 
 
+-------------------------------------------------------------------------------
+4.1 Compilation unit and target module
+-------------------------------------------------------------------------------
 
 <design_unit> ::= <module_declaration>
                 | <empty>
 
-<module_declaration> ::= MODULE <module_name> <opt_parameter_list> <opt_port_list> SEMICOLON <module_item_list> ENDMODULE
-                       | MODULE <module_name> error ENDMODULE
+<module_declaration> ::=
+    MODULE <module_name> <opt_parameter_port_list> <opt_port_list>
+    SEMICOLON <module_item_list> ENDMODULE
 
 <module_name> ::= ID
 
-<opt_parameter_list> ::= HASH LPAREN <parameter_declaration_list> RPAREN
-                       | HASH LPAREN error RPAREN
-                       | <empty>
 
-<parameter_declaration_list> ::= <parameter_declaration>
-                               | <parameter_declaration_list> COMMA <parameter_declaration>
+-------------------------------------------------------------------------------
+4.2 Header parameter declarations
+-------------------------------------------------------------------------------
 
-<parameter_declaration> ::= PARAMETER <param_assignment>
-                          | LOCALPARAM <param_assignment>
-                          | PARAMETER error
-                          | LOCALPARAM error
+<opt_parameter_port_list> ::= HASH LPAREN <parameter_declaration_sequence> RPAREN
+                            | HASH LPAREN RPAREN
+                            | <empty>
 
-<param_assignment> ::= ID EQUALS <expression>
-                     | ID EQUALS error
+<parameter_declaration_sequence> ::= <parameter_declaration_group>
+                                   | <parameter_declaration_sequence> COMMA <parameter_declaration_group>
 
+<parameter_declaration_group> ::= <parameter_kind> <opt_data_type> <param_assignment_list>
 
-<opt_port_list> ::= LPAREN <port_name_list> RPAREN    
-                  | LPAREN <port_list> RPAREN         
-                  | LPAREN RPAREN
-                  | <empty>
-
-<port_name_list> ::= ID| <port_name_list> COMMA ID
-
-<port_list> ::= <port_declaration>
-              | <port_list> COMMA <port_declaration>
-
-<port_declaration> ::= <opt_port_direction> <opt_net_or_reg_type> <opt_packed_dimension> <port_identifier>
-                     | error
-
-<opt_port_direction> ::= INPUT| OUTPUT
-                       | INOUT
-                       | <empty>
-
-<opt_net_or_reg_type> ::= WIRE
-                        | REG
-                        | LOGIC
-                        | <empty>
-
-<opt_packed_dimension> ::= LBRACKET <expression> COLON <expression> RBRACKET
-                | LBRACKET error RBRACKET
-                         | <empty>
-
-<port_identifier> ::= ID
-
-<module_item_list> ::= <empty>
-                     | <module_item_list> <module_item>
-                     | <module_item>
-                     | <module_item_list> error SEMICOLON
-
-<module_item> ::= <module_item_declaration>
-                | <module_item_assignment>
-                | <module_item_always>
-                | <module_item_instance>
-
-<module_item_declaration> ::= INPUT <opt_net_or_reg_type> <opt_packed_dimension> <port_identifier_list> SEMICOLON
-                            | OUTPUT <opt_net_or_reg_type> <opt_packed_dimension> <port_identifier_list> SEMICOLON
-                            | INOUT <opt_net_or_reg_type> <opt_packed_dimension> <port_identifier_list> SEMICOLON
-                            | PARAMETER <param_assignment_list> SEMICOLON
-                            | LOCALPARAM <param_assignment_list> SEMICOLON
-
-<port_identifier_list> ::= <port_identifier>
-                         | <port_identifier_list> COMMA <port_identifier>
-
+<parameter_kind> ::= PARAMETER
+                   | LOCALPARAM
 
 <param_assignment_list> ::= <param_assignment>
                           | <param_assignment_list> COMMA <param_assignment>
 
-<module_item_assignment> ::= ASSIGN <expression> EQUALS <expression> SEMICOLON
+<param_assignment> ::= ID EQUALS <expression>
 
-<module_item_always> ::= ALWAYS <expression> BEGIN <expression_list> END
+<opt_data_type> ::= <data_type>
+                  | <empty>
 
-<module_item_instance> ::= ID ID LPAREN <expression_list> RPAREN SEMICOLON
+
+-------------------------------------------------------------------------------
+4.3 Port lists
+-------------------------------------------------------------------------------
+
+<opt_port_list> ::= LPAREN <ansi_port_declaration_list> RPAREN
+                  | LPAREN <port_name_list> RPAREN
+                  | LPAREN RPAREN
+                  | <empty>
+
+<port_name_list> ::= ID
+                   | <port_name_list> COMMA ID
+
+<ansi_port_declaration_list> ::= <ansi_port_declaration_group>
+                               | <ansi_port_declaration_list> COMMA <ansi_port_declaration_group>
+
+<ansi_port_declaration_group> ::=
+    <port_direction> <opt_port_type> <port_declarator_list>
+
+<port_direction> ::= INPUT
+                   | OUTPUT
+                   | INOUT
+
+<opt_port_type> ::= <port_type>
+                  | <empty>
+
+<port_type> ::= <net_or_var_type> <packed_dimension_list_opt>
+              | <data_type> <packed_dimension_list_opt>
+
+<net_or_var_type> ::= WIRE
+                    | REG
+                    | LOGIC
+
+<data_type> ::= LOGIC
+
+<packed_dimension_list_opt> ::= <packed_dimension_list>
+                              | <empty>
+
+<packed_dimension_list> ::= <packed_dimension>
+                          | <packed_dimension_list> <packed_dimension>
+
+<packed_dimension> ::= LBRACKET <expression> COLON <expression> RBRACKET
+
+<port_declarator_list> ::= <port_declarator>
+                         | <port_declarator_list> COMMA <port_declarator>
+
+<port_declarator> ::= ID
+
+
+-------------------------------------------------------------------------------
+4.4 Body module-level declarations
+-------------------------------------------------------------------------------
+
+<module_item_list> ::= <empty>
+                     | <module_item_list> <module_item>
+                     | <module_item>
+
+<module_item> ::= <body_port_declaration>
+                | <body_parameter_declaration>
+                | <ignored_body_item>
+
+<body_port_declaration> ::=
+    <port_direction> <opt_port_type> <port_declarator_list> SEMICOLON
+
+<body_parameter_declaration> ::=
+    <parameter_kind> <opt_data_type> <param_assignment_list> SEMICOLON
+
+<ignored_body_item> ::= <unsupported_or_unmodeled_body_item>
+
+Rules:
+
+- `<ignored_body_item>` is not represented in `VerilogAst`.
+- The declaration collector may remove ignored body items before yacc parsing.
+- If an ignored body item makes declaration boundaries ambiguous, parsing must
+  fail instead of guessing.
+
+
+-------------------------------------------------------------------------------
+4.5 Expression subset
+-------------------------------------------------------------------------------
 
 <expression> ::= <primary>
-               | <expression> <binary_operator> <expression>
                | <unary_operator> <expression>
+               | <expression> <binary_operator> <expression>
                | <expression> COND <expression> COLON <expression>
                | LPAREN <expression> RPAREN
                | <concatenation>
 
-<binary_operator> ::= PLUS | MINUS | TIMES | DIVIDE | MOD | POWER
-                    | LT | GT | LE | GE | EQ | NE
-                    | LAND | LOR | AND | OR | XOR | XNOR
-                    | LSHIFT | RSHIFT
-
-<unary_operator> ::= PLUS | MINUS | NOT | LNOT
-
 <primary> ::= <number>
-            | <identifier>
-            | <string_literal>
+            | ID
+            | SYSTEM_ID
+            | MACRO_ID
+            | STRING_LITERAL
             | <bit_select>
             | <part_select>
             | <function_call>
 
-<number> ::= INTNUMBER_DEC
-           | INTNUMBER_HEX
-           | INTNUMBER_OCT
-           | INTNUMBER_BIN
-           | <signed_number>
-
-<signed_number> ::= PLUS <number>
-                  | MINUS <number>
-
-<identifier> ::= ID
-
-<string_literal> ::= STRING_LITERAL
+<number> ::= DEC_NUMBER
+           | BASED_NUMBER
 
 <bit_select> ::= ID LBRACKET <expression> RBRACKET
-               | ID LBRACKET error RBRACKET
 
 <part_select> ::= ID LBRACKET <expression> COLON <expression> RBRACKET
-                | ID LBRACKET error COLON error RBRACKET
 
 <function_call> ::= ID LPAREN <expression_list> RPAREN
+                  | SYSTEM_ID LPAREN <expression_list> RPAREN
 
 <concatenation> ::= LBRACE <expression_list> RBRACE
-                  | LBRACE error RBRACE
 
 <expression_list> ::= <expression>
                     | <expression_list> COMMA <expression>
 
-<empty> ::= ε
+<binary_operator> ::= PLUS
+                    | MINUS
+                    | TIMES
+                    | DIVIDE
+                    | MOD
+                    | POWER
+                    | LT
+                    | GT
+                    | LE
+                    | GE
+                    | EQ
+                    | NE
+                    | LAND
+                    | LOR
+                    | AND
+                    | OR
+                    | XOR
+                    | XNOR
+                    | LSHIFT
+                    | RSHIFT
+
+<unary_operator> ::= PLUS
+                   | MINUS
+                   | NOT
+                   | LNOT
+
+Operator precedence, low to high:
+
+    ?:                  right associative
+    ||                  left associative
+    &&                  left associative
+    |                   left associative
+    ^, ^~, ~^           left associative
+    &                   left associative
+    ==, !=              left associative
+    <, >, <=, >=        left associative
+    <<, >>              left associative
+    +, -                left associative
+    *, /, %             left associative
+    **                  right associative
+    unary +, -, ~, !    right associative
 
 
+-------------------------------------------------------------------------------
+4.6 Future SystemVerilog extension points
+-------------------------------------------------------------------------------
+
+The data model should reserve fields for these constructs, but they are not
+current implementation requirements:
+
+<interface_port_type> ::= ID
+                        | ID DOT ID
+
+<opt_signedness> ::= "signed"
+                   | "unsigned"
+                   | <empty>
+
+<unpacked_dimension_list_opt> ::= <unpacked_dimension_list>
+                                | <empty>
+
+<unpacked_dimension_list> ::= <unpacked_dimension>
+                            | <unpacked_dimension_list> <unpacked_dimension>
+
+<unpacked_dimension> ::= LBRACKET <expression> COLON <expression> RBRACKET
+
+<import_declaration> ::= "import" <package_import_item_list> SEMICOLON
+
+<package_import_item_list> ::= <package_import_item>
+                             | <package_import_item_list> COMMA <package_import_item>
+
+<package_import_item> ::= ID DOUBLE_COLON ID
+                        | ID DOUBLE_COLON TIMES
+
+Import handling notes:
+
+- SystemVerilog `import` is not preprocessing. It is grammar and name-resolution
+  metadata.
+- Future import support should record package imports as AST/context metadata.
+- Import support must not read package files implicitly. Package/file discovery
+  belongs to a separate resolver layer.
+- Package discovery must use caller-provided package roots or package indexes;
+  it must not guess the process cwd or project root.
+- Multiple package definitions for the same package name are an ambiguity
+  error.
+- Imported types used in port declarations may be preserved as type text first;
+  full package symbol resolution is a later semantic-analysis problem.
+
+Future fields:
+
+    data_type
+    signedness
+    packed_dimensions
+    unpacked_dimensions
+    interface_type
+    modport
 
 
+===============================================================================
+5. Unsupported Current Grammar
+===============================================================================
 
-<!-- 扩展模块项声明以支持多端口声明 -->
+The following syntax is not supported in the current subset:
+
+- Full module instance syntax, including named port connections `.a(a)`.
+- Procedural blocks: `always`, `initial`, `begin` / `end`.
+- Generate blocks.
+- Tasks and functions.
+- Specify blocks.
+- UDPs.
+- Packages, classes, imports, typedefs, structs, unions, enums.
+- Full SystemVerilog interfaces and modports.
+- Hierarchical references and package scoped references.
+- Escaped identifiers.
+- Full macro expansion and include processing.
+- Full attribute syntax. Attributes may be ignored only when they do not affect
+  target module and declaration extraction.
 
 
+===============================================================================
+6. Error Contract
+===============================================================================
+
+- Unsupported tokens inside the supported declaration subset are parse errors.
+- Unsupported grammar inside the supported declaration subset is a parse error.
+- Unsupported body syntax outside the declaration subset may be skipped only if
+  target module extraction and declaration boundaries remain unambiguous.
+- Preprocess, lexer, or parser diagnostics must prevent returning a successful
+  AST.
+- VCG must fail loudly rather than generate Verilog from a known-dirty AST.
 
 
+<empty> ::= epsilon
