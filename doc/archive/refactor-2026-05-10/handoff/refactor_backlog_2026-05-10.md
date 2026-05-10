@@ -14,9 +14,8 @@
 
 剩余值得开 TASK 的模块主要是：
 
-1. `src/vcg_wires_manager.py`
-2. `src/VerilogLexer.py`
-3. `src/VerilogParser.py` 的异常类型收尾
+1. `src/VerilogLexer.py`
+2. `src/VerilogParser.py` 的异常类型收尾
 
 `src/vcg_exceptions.py` 已完成 TASK-05，但尚未提交时，本文件按“已完成实现、待提交”记录。
 
@@ -34,33 +33,13 @@
 | `src/vcg_instance_manager.py` | TASK-07 已实现，待提交 | `doc/task_07_refactor_vcg_instance_manager.md` |
 | `src/vcg_logger.py` | 已完成手工重构 | `doc/delivery_manual_vcg_logger_refactor.md` |
 | `src/vcg_rule_manager.py` | 已完成结构性重构 | `936dfdb refactor: harden rule manager` |
+| `src/vcg_wires_manager.py` | TASK-08 完成 | `doc/task_08_refactor_vcg_wires_manager.md`、`doc/check_08_refactor_vcg_wires_manager.md` |
 | `src/VerilogLexer.py` 字符串转义 bug | 已完成关键修复 | `18a3c94 fix: correct STRING_LITERAL escape order in lexer` |
 | `src/VerilogLexer.py` 死代码清理 | 已做一轮 | `a074837 refactor: clean up VerilogLexer.py dead code and normalize error handling` |
 | `src/VerilogParser.py` silent failure | 已完成一轮结构性重构 | `12931bd refactor: Parser error handling + drop unused always/begin/end grammar` |
 | `src/vcg_instance_manager.py` 端口计数恒 0 | 已完成关键修复 | `2f9ecd5 fix: count port connections directly instead of grepping generated text` |
 
-## P0：建议下一批任务
-
-### TASK-08 候选：`src/vcg_wires_manager.py`
-
-该模块和 InstanceManager 对称，但风险点集中在宽度格式化。建议先做低风险拆分，不要直接引入复杂 ADT。
-
-主要问题：
-
-- `width` 同时表示 int、数字字符串、range string、表达式、多维数组字符串。
-- `_format_wire_width()` 通过 `isdigit()`、`startswith("[")`、operator sniffing 分类。
-- `_is_multi_dimensional()` 只识别紧贴的 `']['`，对 `[3:0] [7:0]` 这类空格形式漏判。
-- `_format_wire_declaration()` 混合宽度选择、对齐和最终声明拼接。
-- `except Exception` 仍包装为 `VCGRuntimeError`，需要与全仓异常纪律一致。
-
-建议范围：
-
-- 先拆 `_resolve_width_text()`、`_format_spacing()`、`_render_wire_declaration()`。
-- `_is_multi_dimensional()` 改为基于 bracket pair 计数或正则，覆盖空格形式。
-- 保持现有输出格式和 `set_base_spacing()` / `get_base_spacing()` API。
-- 宽度 ADT 化单独评估，不要和低风险清理混在同一个 TASK。
-
-## P1：Parser/Lexer 收尾
+## P0：Parser/Lexer 收尾
 
 ### TASK-09 候选：`src/VerilogLexer.py`
 
@@ -87,7 +66,7 @@ Parser 已经完成 silent failure 的一轮结构性修复，当前不建议做
 
 建议与 TASK-09 绑定或排在其后。
 
-## P2：横切清理项
+## P1：横切清理项
 
 ### 全仓异常处理统一
 
@@ -117,6 +96,5 @@ Parser 已经完成 silent failure 的一轮结构性修复，当前不建议做
 
 ## 建议执行顺序
 
-1. TASK-08：`src/vcg_wires_manager.py` 宽度格式化拆分 + 多维识别修正。
-2. TASK-09：`src/VerilogLexer.py` token/`VCGSyntaxError` 策略。
-3. TASK-10：`src/VerilogParser.py` 异常语义收尾。
+1. TASK-09：`src/VerilogLexer.py` token/`VCGSyntaxError` 策略。
+2. TASK-10：`src/VerilogParser.py` 异常语义收尾。

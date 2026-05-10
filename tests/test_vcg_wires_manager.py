@@ -1,50 +1,38 @@
-"""
-WiresManager 单元测试模块（修复版本）
-测试平台: pytest
-修复说明: resolve_wire_generation 返回值从 (wire_name, expression) 修正为 (wire_name, width, expression, rule_matched)
-"""
+"""Tests for WiresManager behavior and TASK-08 refactor contracts."""
 
-import os
 import sys
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 import pytest
-from unittest.mock import Mock, patch, MagicMock
 
-# 设置项目路径
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, project_root)
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.vcg_wires_manager import WiresManager
-from src.vcg_rule_manager import VCGRuleManager
 from src.vcg_exceptions import VCGFileError, VCGParseError, VCGRuntimeError, VCGSyntaxError
+from src.vcg_rule_manager import VCGRuleManager
+from src.vcg_wires_manager import WiresManager
 
-
-#==================== 测试夹具 (Fixtures) ====================
 
 @pytest.fixture
 def mock_rule_manager():
-    """模拟规则管理器"""
-    manager = Mock(spec=VCGRuleManager)
-    return manager
+    """Create a mock rule manager matching WiresManager's dependency contract."""
+    return Mock(spec=VCGRuleManager)
 
 
 @pytest.fixture
 def wires_manager(mock_rule_manager):
-    """创建 WiresManager 实例"""
+    """Create a WiresManager with a mock rule manager."""
     return WiresManager(mock_rule_manager)
 
 
 @pytest.fixture
-def wires_manager_with_macros(mock_rule_manager):
-    """创建带宏定义的 WiresManager 实例"""
-    macros = {"WIDTH": "8", "DEPTH": "16"}
-    return WiresManager(mock_rule_manager, macros=macros)
-
-
-@pytest.fixture
 def sample_verilog_file(tmp_path):
-    """创建示例 Verilog 文件"""
+    """Create a valid Verilog module for parser smoke tests."""
     file_path = tmp_path / "test_module.v"
-    content = """
+    file_path.write_text(
+        """
 module test_module (
     input wire clk,
     input wire rst_n,
@@ -55,978 +43,398 @@ module test_module (
 );
 endmodule
 """
-    file_path.write_text(content)
-    return str(file_path)
-
-
-@pytest.fixture
-def invalid_verilog_file(tmp_path):
-    """创建无效的 Verilog 文件"""
-    file_path = tmp_path / "invalid.v"
-    content = "this is not valid verilog code @#$%"
-    file_path.write_text(content)
+    )
     return str(file_path)
 
 
 @pytest.fixture
 def empty_module_file(tmp_path):
-    """创建空端口列表的模块"""
+    """Create a valid module with no ports."""
     file_path = tmp_path / "empty_module.v"
-    content = """
-module empty_module ();
-endmodule
-"""
-    file_path.write_text(content)
+    file_path.write_text("module empty_module (); endmodule\n")
     return str(file_path)
 
 
-@pytest.fixture
-def parametric_module_file(tmp_path):
-    """创建参数化宽度的模块"""
-    file_path = tmp_path / "param_module.v"
-    content = """
-module param_module #(
-    parameter DATA_WIDTH = 32,
-    parameter ADDR_WIDTH = 16
-)(
-    input wire [DATA_WIDTH-1:0] data,
-    input wire [ADDR_WIDTH-1:0] addr,
-    output wire [(DATA_WIDTH+8)-1:0] result
-);
-endmodule
-"""
-    file_path.write_text(content)
-    return str(file_path)
+def make_port(name="port", direction="input", width=None, range_string=""):
+    """Create a minimal port object matching the WiresManager contract."""
+    return SimpleNamespace(
+        name=name,
+        direction=direction,
+        width=width,
+        range_string=range_string,
+    )
 
 
-@pytest.fixture
-def multidim_array_file(tmp_path):
-    """创建多维数组端口的模块"""
-    file_path = tmp_path / "multidim.v"
-    content = """
-module multidim_module (
-    input wire [7:0][3:0] array_in,
-    output wire [15:0][7:0] array_out
-);
-endmodule
-"""
-    file_path.write_text(content)
-    return str(file_path)
+def use_ports(wires_manager, ports):
+    """Replace the parser instance with a mock AST provider."""
+    mock_ast = Mock()
+    mock_ast.get_port_info.return_value = ports
 
+    wires_manager.parser = Mock()
+    wires_manager.parser.parse_file.return_value = mock_ast
+    return mock_ast
 
-#==================== F1: 文件解析功能测试 ====================
 
 class TestFileParsingFeatures:
-    """F1: 文件解析功能测试"""
-    
-    def test_tc001_parse_valid_file(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC001: 成功解析有效的Verilog 文件 (F1.1)"""
-        # ✅ 修复: 返回4个值 (wire_name, width, expression, rule_matched)
+    """File parsing and parser error behavior."""
+
+    def test_parse_valid_file_with_real_parser(self, wires_manager, sample_verilog_file, mock_rule_manager):
+        """A real parsed module should produce greedy wires for all parsed ports."""
         mock_rule_manager.resolve_wire_generation.return_value = (None, None, None, False)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {
-                    'ports': [
-                        Mock(name='clk', direction='input', width=None),
-                        Mock(name='data_in', direction='input', width='8')
-                    ]
-                }
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file, 
-                'test_module'
-            )
-            
-            assert isinstance(result, str)
-            assert 'wire' in result
-    
-    def test_tc002_file_not_exists(self, wires_manager):
-        """TC002: 文件不存在 (F1.2)"""
+
+        result = wires_manager.generate_wires_def(sample_verilog_file, "test_module")
+
+        assert result.splitlines() == [
+            "wire           clk;",
+            "wire           rst_n;",
+            "wire [7:0]     data_in;",
+            "wire [15:0]    data_out;",
+            "wire           valid;",
+            "wire [3:0]     bidir_port;",
+        ]
+
+    def test_file_not_exists_raises_vcg_file_error(self, wires_manager):
+        """A missing file should surface as VCGFileError."""
         with pytest.raises(VCGFileError):
-            wires_manager.generate_wires_def(
-                "/non/existent/path/file.v",
-                "test_module"
-            )
-    
-    def test_tc003_invalid_verilog_syntax(self, wires_manager, invalid_verilog_file):
-        """TC003: 解析错误的 Verilog 文件 (F1.3)"""
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.side_effect = VCGParseError("Parse error")
-            
-            with pytest.raises(VCGParseError):
-                wires_manager.generate_wires_def(
-                    invalid_verilog_file,
-                    "test_module"
-                )
-    
-    def test_tc004_file_with_macros(self, wires_manager_with_macros, sample_verilog_file):
-        """TC004: 支持带宏定义的 Verilog 文件解析 (F1.4)"""
-        # 验证宏定义被传递给 WiresManager 并存储
-        assert wires_manager_with_macros.macros == {"WIDTH": "8", "DEPTH": "16"}
-        # 验证 parser 使用了正确的宏
-        assert wires_manager_with_macros.parser.preprocessor.macros is not None
+            wires_manager.generate_wires_def("/non/existent/path/file.v", "test_module")
 
+    def test_vcg_parse_error_is_not_wrapped(self, wires_manager, sample_verilog_file):
+        """VCG parse errors from parser must propagate unchanged."""
+        parse_error = VCGParseError("parse failed")
+        wires_manager.parser = Mock()
+        wires_manager.parser.parse_file.side_effect = parse_error
 
-# ==================== F2: 端口方向过滤功能测试 ====================
+        with pytest.raises(VCGParseError) as exc_info:
+            wires_manager.generate_wires_def(sample_verilog_file, "test_module")
+
+        assert exc_info.value is parse_error
+
+    def test_vcg_syntax_error_is_not_wrapped(self, wires_manager, sample_verilog_file):
+        """VCG syntax errors from parser must propagate unchanged."""
+        syntax_error = VCGSyntaxError("syntax failed")
+        wires_manager.parser = Mock()
+        wires_manager.parser.parse_file.side_effect = syntax_error
+
+        with pytest.raises(VCGSyntaxError) as exc_info:
+            wires_manager.generate_wires_def(sample_verilog_file, "test_module")
+
+        assert exc_info.value is syntax_error
+
+    def test_unknown_exception_is_wrapped_as_runtime_error(self, wires_manager, sample_verilog_file):
+        """Unexpected parser failures should preserve cause under VCGRuntimeError."""
+        original = TypeError("bad port object")
+        wires_manager.parser = Mock()
+        wires_manager.parser.parse_file.side_effect = original
+
+        with pytest.raises(VCGRuntimeError) as exc_info:
+            wires_manager.generate_wires_def(sample_verilog_file, "test_module")
+
+        assert exc_info.value.__cause__ is original
+
+    def test_macros_are_passed_to_parser(self, mock_rule_manager):
+        """Macros passed to WiresManager should be visible on the parser preprocessor."""
+        macros = {"WIDTH": "8", "DEPTH": "16"}
+
+        manager = WiresManager(mock_rule_manager, macros=macros)
+
+        assert manager.macros == macros
+        assert manager.parser.preprocessor.macros == macros
+
 
 class TestPortDirectionFiltering:
-    """F2: 端口方向过滤功能测试"""
-    
-    def setup_method(self):
-        """设置测试数据"""
-        self.mock_ports = [
-            Mock(name='clk', direction='input', width=None),
-            Mock(name='data_in', direction='input', width='8'),
-            Mock(name='data_out', direction='output', width='16'),
-            Mock(name='valid', direction='output', width=None),
-            Mock(name='bidir', direction='inout', width='4')
+    """Port direction filtering behavior."""
+
+    @pytest.fixture
+    def ports(self):
+        """Create representative ports for direction filtering."""
+        return [
+            make_port(name="clk", direction="input"),
+            make_port(name="data_in", direction="input", width=8, range_string="[7:0]"),
+            make_port(name="data_out", direction="output", width=16, range_string="[15:0]"),
+            make_port(name="valid", direction="output"),
+            make_port(name="bidir", direction="inout", width=4, range_string="[3:0]"),
         ]
-    
-    def test_tc101_all_ports(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC101: port_direction=None - 处理所有端口 (F2.1)"""
-        # ✅ 修复: 4个返回值
+
+    @pytest.mark.parametrize(
+        ("direction", "expected_lines"),
+        [
+            (
+                None,
+                [
+                    "wire           clk;",
+                    "wire [7:0]     data_in;",
+                    "wire [15:0]    data_out;",
+                    "wire           valid;",
+                    "wire [3:0]     bidir;",
+                ],
+            ),
+            (
+                "INPUT",
+                [
+                    "wire           clk;",
+                    "wire [7:0]     data_in;",
+                ],
+            ),
+            (
+                "Output",
+                [
+                    "wire [15:0]    data_out;",
+                    "wire           valid;",
+                ],
+            ),
+            ("inout", ["wire [3:0]     bidir;"]),
+        ],
+    )
+    def test_filters_ports_by_direction(
+        self,
+        wires_manager,
+        sample_verilog_file,
+        mock_rule_manager,
+        ports,
+        direction,
+        expected_lines,
+    ):
+        """Direction filter should be case-insensitive and preserve greedy output."""
         mock_rule_manager.resolve_wire_generation.return_value = (None, None, None, False)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': self.mock_ports}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module',
-                port_direction=None
-            )
-            
-            # 验证所有端口都被处理
-            assert 'clk' in result or mock_rule_manager.resolve_wire_generation.call_count == 5
-    def test_tc102_input_ports_only(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC102: port_direction="input" - 仅处理输入端口 (F2.2)"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = (None, None, None, False)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': self.mock_ports}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module',
-                port_direction='input'
-            )
-            
-            # 验证只处理了输入端口
-            lines = result.strip().split('\n') if result else []
-            for line in lines:
-                # 输出端口名不应出现（除非规则改变了名称）
-                pass# 具体验证依赖实际实现
-    
-    def test_tc103_output_ports_only(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC103: port_direction="output" - 仅处理输出端口 (F2.3)"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = (None, None, None, False)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': self.mock_ports}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module',
-                port_direction='output'
-            )
-            
-            assert isinstance(result, str)
-    
-    def test_tc104_inout_ports_only(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC104: port_direction="inout" - 仅处理双向端口 (F2.4)"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = (None, None, None, False)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': self.mock_ports}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module',
-                port_direction='inout'
-            )
-            
-            assert isinstance(result, str)
-    
-    def test_tc105_invalid_direction(self, wires_manager, sample_verilog_file):
-        """TC105: 无效的 port_direction 值 (F2.5)"""
-        with pytest.raises(ValueError):
-            wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module',
-                port_direction='invalid_direction'
-            )
-    
-    def test_tc106_case_insensitive_direction(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC106: 大小写混合的方向参数 (F2.2/F2.3)"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = (None, None, None, False)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': self.mock_ports}
-            }
-            
-            # 测试 "INPUT"
-            result1 = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module',
-                port_direction='INPUT'
-            )
-            assert isinstance(result1, str)
-            
-            # 测试 "Output"
-            result2 = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module',
-                port_direction='Output'
-            )
-            assert isinstance(result2, str)
+        use_ports(wires_manager, ports)
 
-
-# ==================== F3: 生成模式功能测试 ====================
-
-class TestGenerationPatterns:
-    """F3: 生成模式功能测试"""
-    
-    def setup_method(self):
-        """设置测试端口"""
-        self.mock_ports = [
-            Mock(name='matched_port', direction='input', width='8'),
-            Mock(name='unmatched_port', direction='input', width='4')
-        ]
-    
-    def test_tc201_greedy_rule_matched(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC201: 贪婪模式-规则匹配且返回有效名称 (F3.1.1)"""
-        # ✅ 修复: 规则返回有效的wire名称 (wire_name, width, expression, rule_matched)
-        mock_rule_manager.resolve_wire_generation.return_value = ('wire_name', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [self.mock_ports[0]]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module',
-                pattern='greedy'
-            )
-            
-            assert 'wire_name' in result or'wire' in result
-    
-    def test_tc202_greedy_rule_matched_empty_name(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC202: 贪婪模式-规则匹配但返回空名称 (F3.1.2)"""
-        # ✅ 修复: 规则返回空字符串
-        mock_rule_manager.resolve_wire_generation.return_value = ('', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [self.mock_ports[0]]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module',
-                pattern='greedy'
-            )
-            
-            # 不应生成该wire
-            assert result == '' or 'matched_port' not in result
-    
-    def test_tc203_greedy_rule_not_matched(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC203: 贪婪模式-规则未匹配 (F3.1.3)"""
-        # ✅ 修复: 规则未匹配，返回 None, False
-        mock_rule_manager.resolve_wire_generation.return_value = (None, None, None, False)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [self.mock_ports[1]]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module',
-                pattern='greedy'
-            )
-            
-            # 应使用端口名作为wire名
-            assert 'unmatched_port' in result or 'wire' in result
-    
-    def test_tc204_lazy_rule_matched(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC204: 懒惰模式-规则匹配且返回有效名称 (F3.2.1)"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = ('wire_name', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [self.mock_ports[0]]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module',
-                pattern='lazy'
-            )
-            
-            assert 'wire_name' in result or 'wire' in result
-    
-    def test_tc205_lazy_rule_matched_empty_name(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC205: 懒惰模式-规则匹配但返回空名称 (F3.2.2)"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = ('', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [self.mock_ports[0]]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module',
-                pattern='lazy'
-            )
-            
-            # 不应生成该wire
-            assert result == ''
-    
-    def test_tc206_lazy_rule_not_matched(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC206: 懒惰模式-规则未匹配，跳过端口 (F3.2.3)"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = (None, None, None, False)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [self.mock_ports[1]]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module',
-                pattern='lazy'
-            )
-            
-            # lazy模式下未匹配应跳过
-            assert result == ''
-    
-    def test_tc207_invalid_pattern(self, wires_manager, sample_verilog_file):
-        """TC207: 无效的 pattern 值 (F3.3)"""
-        with pytest.raises(ValueError):
-            wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module',
-                pattern='invalid_pattern'
-            )
-
-
-# ==================== F4: 宽度格式化功能测试 ====================
-
-class TestWidthFormatting:
-    """F4: 宽度格式化功能测试"""
-    
-    def test_tc301_no_width(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC301: 无宽度信息 (F4.1)"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = ('test_wire', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [Mock(name='port', direction='input', width=None)]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module'
-            )
-            
-            # 不应包含宽度声明
-            assert 'wire' in result
-            assert '[' not in result or'test_wire' in result
-    
-    def test_tc302_single_bit_integer_1(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC302: 单比特整数1 (F4.2.1)"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = ('test_wire', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [Mock(name='port', direction='input', width=1)]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module'
-            )
-            
-            # 宽度为1时不应生成宽度声明
-            lines = result.strip().split('\n')
-            assert any('[0:0]' not in line for line in lines)
-    
-    def test_tc303_single_bit_integer_0(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC303: 单比特整数0 (F4.2.1)"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = ('test_wire', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [Mock(name='port', direction='input', width=0)]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module'
-            )
-            
-            assert 'wire' in result
-    
-    def test_tc304_multibit_integer(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC304: 多比特整数 (F4.2.2)"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = ('test_wire', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [Mock(name='port', direction='input', width=8)]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module'
-            )
-            
-            # 应生成 [7:0]
-            assert '[7:0]' in result or 'wire' in result
-    
-    def test_tc305_numeric_string_single_bit(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC305: 纯数字字符串单比特 (F4.3.1)"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = ('test_wire', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [Mock(name='port', direction='input', width='1')]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module'
-            )
-            
-            assert 'wire' in result
-    
-    def test_tc306_numeric_string_multibit(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC306: 纯数字字符串多比特 (F4.3.2)"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = ('test_wire', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [Mock(name='port', direction='input', width='32')]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module'
-            )
-            
-            # 应生成 [31:0]
-            assert '[31:0]' in result or 'wire' in result
-    
-    def test_tc307_formatted_width(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC307: 已格式化的宽度 (F4.4)"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = ('test_wire', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [Mock(name='port', direction='input', width='[15:0]')]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module'
-            )
-            
-            # 应直接使用 [15:0]
-            assert '[15:0]' in result
-    
-    def test_tc308_addition_expression(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC308: 加法表达式 (F4.5)"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = ('test_wire', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [Mock(name='port', direction='input', width='N+1')]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module'
-            )
-            
-            # 应生成 [(N+1)-1:0]
-            assert '(N+1)-1:0' in result or 'wire' in result
-    
-    def test_tc309_subtraction_expression(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC309: 减法表达式 (F4.5)"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = ('test_wire', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [Mock(name='port', direction='input', width='N-1')]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module'
-            )
-            
-            assert'wire' in result
-    
-    def test_tc310_multiplication_expression(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC310: 乘法表达式 (F4.5)"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = ('test_wire', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [Mock(name='port', direction='input', width='N*2')]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module'
-            )
-            
-            assert 'wire' in result
-    
-    def test_tc311_parenthesis_expression(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC311: 括号表达式 (F4.5)"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = ('test_wire', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [Mock(name='port', direction='input', width='(N+M)/2')]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module'
-            )
-            
-            # 应生成 [((N+M)/2)-1:0]
-            assert 'wire' in result
-    
-    def test_tc312_parametric_width(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC312: 参数化宽度 (F4.6)"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = ('test_wire', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [Mock(name='port', direction='input', width='WIDTH')]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module'
-            )
-            
-            # 应生成 [WIDTH-1:0]
-            assert 'WIDTH-1:0' in result or 'wire' in result
-    
-    def test_tc313_multidimensional_array(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC313: 多维数组 (F4.7)"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = ('test_wire', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [Mock(name='port', direction='input', width='[7:0][3:0]')]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module'
-            )
-            
-            # 应直接使用原格式
-            assert '[7:0][3:0]' in result or 'wire' in result
-
-
-# ==================== F5: 表达式处理功能测试 ====================
-
-class TestExpressionHandling:
-    """F5: 表达式处理功能测试"""
-    
-    def test_tc401_no_expression(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC401: 无表达式 (F5.1)"""
-        # ✅ 修复: 4个返回值 (wire_name, width, expression, rule_matched)
-        mock_rule_manager.resolve_wire_generation.return_value = ('data', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [Mock(name='port', direction='input', width=8)]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module'
-            )
-            
-            # 应生成 wire [7:0] data;
-            assert 'wire' in result
-            assert ';' in result
-            assert '=' not in result  # 无表达式
-    
-    def test_tc402_with_expression_no_width(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC402: 有表达式无宽度 (F5.2)"""
-        # ✅ 修复: 4个返回值，第3个参数是表达式
-        mock_rule_manager.resolve_wire_generation.return_value = ('valid', None, "1'b0", True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [Mock(name='port', direction='output', width=None)]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module'
-            )
-            
-            # 应生成 wire valid = 1'b0;
-            assert 'wire' in result
-            assert '=' in result
-            assert "1'b0" in result or'valid' in result
-    
-    def test_tc403_with_expression_and_width(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC403: 有表达式有宽度 (F5.2)"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = ('counter', None, "16'd0", True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [Mock(name='port', direction='output', width=16)]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module'
-            )
-            
-            # 应生成 wire [15:0] counter = 16'd0;
-            assert 'wire' in result
-            assert '=' in result
-
-
-# ==================== F6: 对齐格式化功能测试 ====================
-
-class TestAlignmentFormatting:
-    """F6: 对齐格式化功能测试"""
-    
-    def test_tc501_default_spacing(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC501: 默认间距15 (F6.1)"""
-        assert wires_manager.get_base_spacing() == 15
-        
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = ('name', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [Mock(name='port', direction='input', width=8)]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module'
-            )
-            
-            # 验证对齐格式
-            assert 'wire' in result
-    
-    def test_tc502_long_prefix(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC502: 前缀过长使用单个空格 (F6.2)"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = ('very_long_signal_name', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [Mock(name='port', direction='input', width='[127:0]')]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module'
-            )
-            
-            # 当前缀很长时，应该只用一个空格
-            assert 'wire' in result
-    
-    def test_tc503_custom_spacing(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """TC503: 自定义间距20 (F6.3)"""
-        wires_manager.set_base_spacing(20)
-        assert wires_manager.get_base_spacing() == 20
-        
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = ('sig', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [Mock(name='port', direction='input', width=4)]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module'
-            )
-            
-            assert 'wire' in result
-    
-    def test_tc504_get_spacing(self, wires_manager):
-        """TC504: 获取间距配置 (F6.3)"""
-        default_spacing = wires_manager.get_base_spacing()
-        assert default_spacing == 15
-        
-        wires_manager.set_base_spacing(25)
-        new_spacing = wires_manager.get_base_spacing()
-        assert new_spacing == 25
-
-
-# ==================== 边界条件测试 ====================
-
-class TestBoundaryConditions:
-    """边界条件测试"""
-    
-    def test_bc001_empty_file_path(self, wires_manager):
-        """BC001: 文件路径为空字符串"""
-        with pytest.raises((VCGFileError, ValueError)):
-            wires_manager.generate_wires_def('', 'test_module')
-    
-    def test_bc002_empty_module_name(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """BC002: module_name 为空字符串"""
-        mock_rule_manager.resolve_wire_generation.return_value = (None, None, None, False)
-
-        # 真实 parser 解析 sample_verilog_file，module_name 参数不影响解析
-        # generate_wires_def 处理所有端口，module_name 仅用于日志
         result = wires_manager.generate_wires_def(
             sample_verilog_file,
-            ''
+            "test_module",
+            port_direction=direction,
         )
-        # 应返回有效结果（greedy 模式下使用端口名作为 wire 名）
-        assert isinstance(result, str)
-    
-    def test_bc003_empty_port_list(self, wires_manager, empty_module_file, mock_rule_manager):
-        """BC003: 端口列表为空"""
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'empty_module': {'ports': []}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                empty_module_file,
-                'empty_module'
-            )
-            # 应返回空字符串
-            assert result == ''
-    
-    def test_bc004_negative_width(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """BC004: 宽度为负数"""
-        #✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = ('test', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [Mock(name='port', direction='input', width=-5)]}
-            }
-            
-            result = wires_manager.generate_wires_def(
+
+        assert result.splitlines() == expected_lines
+
+    def test_invalid_direction_raises_value_error(self, wires_manager, sample_verilog_file):
+        """Invalid port_direction values should be rejected."""
+        with pytest.raises(ValueError):
+            wires_manager.generate_wires_def(
                 sample_verilog_file,
-                'test_module'
+                "test_module",
+                port_direction="invalid_direction",
             )
-            
-            # 应按表达式处理
-            assert 'wire' in result
-    
-    def test_bc005_special_characters_in_name(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """BC005: wire名称包含特殊字符"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = ('sig$name', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [Mock(name='port', direction='input', width=None)]}
-            }
-            
-            result = wires_manager.generate_wires_def(
+
+
+class TestGenerationPatterns:
+    """Greedy and lazy generation mode behavior."""
+
+    @pytest.mark.parametrize(
+        ("pattern", "wire_name", "rule_matched", "expected"),
+        [
+            ("greedy", "rule_sig", True, "wire           rule_sig;"),
+            ("greedy", "", True, ""),
+            ("greedy", None, False, "wire           data;"),
+            ("lazy", "rule_sig", True, "wire           rule_sig;"),
+            ("lazy", "", True, ""),
+            ("lazy", None, False, ""),
+        ],
+    )
+    def test_generation_pattern_matrix(
+        self,
+        wires_manager,
+        sample_verilog_file,
+        mock_rule_manager,
+        pattern,
+        wire_name,
+        rule_matched,
+        expected,
+    ):
+        """Greedy/lazy behavior is defined by rule match and resolved wire name."""
+        mock_rule_manager.resolve_wire_generation.return_value = (
+            wire_name,
+            None,
+            None,
+            rule_matched,
+        )
+        use_ports(wires_manager, [make_port(name="data")])
+
+        result = wires_manager.generate_wires_def(
+            sample_verilog_file,
+            "test_module",
+            pattern=pattern,
+        )
+
+        assert result == expected
+
+    def test_invalid_pattern_raises_value_error(self, wires_manager, sample_verilog_file):
+        """Invalid generation patterns should be rejected."""
+        with pytest.raises(ValueError):
+            wires_manager.generate_wires_def(
                 sample_verilog_file,
-                'test_module'
+                "test_module",
+                pattern="invalid_pattern",
             )
-            
-            # 应保留原样
-            assert 'sig$name' in result or 'wire' in result
-    
-    def test_bc006_zero_or_negative_spacing(self, wires_manager):
-        """BC006: 间距设置为0或负数"""
+
+
+class TestWidthFormatting:
+    """Width formatting behavior."""
+
+    @pytest.mark.parametrize(
+        ("width_input", "expected"),
+        [
+            (None, ""),
+            ("", ""),
+            (0, ""),
+            (1, ""),
+            (8, "[7:0]"),
+            ("1", ""),
+            ("32", "[31:0]"),
+            ("[15:0]", "[15:0]"),
+            ("[7:0][3:0]", "[7:0][3:0]"),
+            ("[7:0] [3:0]", "[7:0] [3:0]"),
+            ("[7:0]\t[3:0]", "[7:0]\t[3:0]"),
+            ("WIDTH", "[WIDTH-1:0]"),
+            ("N+1", "[(N+1)-1:0]"),
+            ("N-1", "[(N-1)-1:0]"),
+            ("N*2", "[(N*2)-1:0]"),
+            ("(N+M)/2", "[((N+M)/2)-1:0]"),
+            ("(A+B)*C-1", "[((A+B)*C-1)-1:0]"),
+        ],
+    )
+    def test_format_wire_width(self, wires_manager, width_input, expected):
+        """Supported width inputs should map to stable Verilog range text."""
+        assert wires_manager._format_wire_width(width_input) == expected
+
+    def test_rule_width_overrides_port_width(self, wires_manager, sample_verilog_file, mock_rule_manager):
+        """Explicit rule width has priority over parsed port width."""
+        mock_rule_manager.resolve_wire_generation.return_value = ("sig", "4", None, True)
+        use_ports(
+            wires_manager,
+            [make_port(name="data", width=8, range_string="[7:0]")],
+        )
+
+        result = wires_manager.generate_wires_def(sample_verilog_file, "test_module")
+
+        assert result == "wire [3:0]     sig;"
+
+    def test_empty_rule_width_falls_back_to_port_width(self, wires_manager, sample_verilog_file, mock_rule_manager):
+        """Empty rule width should not erase a vector port width."""
+        mock_rule_manager.resolve_wire_generation.return_value = ("sig", "", None, True)
+        use_ports(
+            wires_manager,
+            [make_port(name="data", width=8, range_string="[7:0]")],
+        )
+
+        result = wires_manager.generate_wires_def(sample_verilog_file, "test_module")
+
+        assert result == "wire [7:0]     sig;"
+
+    def test_simple_port_width_does_not_render_range(self, wires_manager, sample_verilog_file, mock_rule_manager):
+        """Scalar port width should not render [0:0]."""
+        mock_rule_manager.resolve_wire_generation.return_value = ("sig", None, None, True)
+        use_ports(wires_manager, [make_port(name="sig", width=1)])
+
+        result = wires_manager.generate_wires_def(sample_verilog_file, "test_module")
+
+        assert result == "wire           sig;"
+
+
+class TestExpressionAndAlignment:
+    """Expression rendering and alignment behavior."""
+
+    @pytest.mark.parametrize(
+        ("width", "name", "expression", "expected"),
+        [
+            (8, "data", None, "wire [7:0]     data;"),
+            (None, "valid", "1'b0", "wire           valid = 1'b0;"),
+            (16, "counter", "16'd0", "wire [15:0]    counter = 16'd0;"),
+            ("[127:0]", "wide", None, "wire [127:0]   wide;"),
+        ],
+    )
+    def test_render_wire_declaration_exact_output(
+        self,
+        wires_manager,
+        sample_verilog_file,
+        mock_rule_manager,
+        width,
+        name,
+        expression,
+        expected,
+    ):
+        """Wire declarations should preserve existing spacing and expression format."""
+        mock_rule_manager.resolve_wire_generation.return_value = (name, None, expression, True)
+        use_ports(
+            wires_manager,
+            [make_port(name=name, width=width, range_string="[7:0]" if width else "")],
+        )
+
+        result = wires_manager.generate_wires_def(sample_verilog_file, "test_module")
+
+        assert result == expected
+
+    def test_custom_spacing_affects_rendered_output(self, wires_manager, sample_verilog_file, mock_rule_manager):
+        """set_base_spacing should change the target name column."""
+        wires_manager.set_base_spacing(20)
+        mock_rule_manager.resolve_wire_generation.return_value = ("sig", None, None, True)
+        use_ports(wires_manager, [make_port(name="sig", width=4, range_string="[3:0]")])
+
+        result = wires_manager.generate_wires_def(sample_verilog_file, "test_module")
+
+        assert result == "wire [3:0]          sig;"
+        assert wires_manager.get_base_spacing() == 20
+
+    def test_long_prefix_uses_single_space(self, wires_manager, sample_verilog_file, mock_rule_manager):
+        """A prefix at or beyond the name column should still separate the name."""
+        mock_rule_manager.resolve_wire_generation.return_value = ("sig", None, None, True)
+        use_ports(wires_manager, [make_port(name="sig", width="[1048575:0]", range_string="[1048575:0]")])
+
+        result = wires_manager.generate_wires_def(sample_verilog_file, "test_module")
+
+        assert result == "wire [1048575:0] sig;"
+
+    def test_zero_or_negative_spacing_remains_allowed(self, wires_manager):
+        """Spacing setter keeps historical permissive behavior."""
         wires_manager.set_base_spacing(0)
         assert wires_manager.get_base_spacing() == 0
-        
+
         wires_manager.set_base_spacing(-5)
         assert wires_manager.get_base_spacing() == -5
 
 
-# ==================== 特殊场景测试 ====================
+class TestBoundaryConditions:
+    """Boundary and special naming behavior."""
 
-class TestSpecialScenarios:
-    """特殊场景测试"""
-    
-    def test_ss001_port_name_with_underscore(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """SS001: 端口名包含下划线"""
-        # ✅ 修复: 4个返回值
+    def test_empty_file_path_raises_vcg_file_error(self, wires_manager):
+        """An empty path should be treated as an invalid file path."""
+        with pytest.raises(VCGFileError):
+            wires_manager.generate_wires_def("", "test_module")
+
+    def test_empty_module_name_is_only_used_for_logging(
+        self,
+        wires_manager,
+        sample_verilog_file,
+        mock_rule_manager,
+    ):
+        """module_name is not used to filter the parsed AST in current API."""
         mock_rule_manager.resolve_wire_generation.return_value = (None, None, None, False)
+        use_ports(wires_manager, [make_port(name="data")])
 
-        mock_port = Mock()
-        mock_port.name = 'data_valid'
-        mock_port.direction = 'input'
-        mock_port.range_string = ''
-        mock_port.width = None
+        result = wires_manager.generate_wires_def(sample_verilog_file, "")
 
-        mock_ast = Mock()
-        mock_ast.get_port_info.return_value = [mock_port]
+        assert result == "wire           data;"
 
-        wires_manager.parser = Mock()
-        wires_manager.parser.parse_file.return_value = mock_ast
-
-        result = wires_manager.generate_wires_def(
-            sample_verilog_file,
-            'test_module',
-            pattern='greedy'
-        )
-
-        assert 'data_valid' in result
-    
-    def test_ss002_port_name_with_digits(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """SS002: 端口名包含数字"""
+    def test_empty_port_list_returns_empty_string(self, wires_manager, empty_module_file, mock_rule_manager):
+        """A module with no ports should produce no wire declarations."""
         mock_rule_manager.resolve_wire_generation.return_value = (None, None, None, False)
+        use_ports(wires_manager, [])
 
-        mock_port = Mock()
-        mock_port.name = 'port0'
-        mock_port.direction = 'input'
-        mock_port.range_string = ''
-        mock_port.width = None
+        result = wires_manager.generate_wires_def(empty_module_file, "empty_module")
 
-        mock_ast = Mock()
-        mock_ast.get_port_info.return_value = [mock_port]
+        assert result == ""
 
-        wires_manager.parser = Mock()
-        wires_manager.parser.parse_file.return_value = mock_ast
+    @pytest.mark.parametrize("wire_name", ["data_valid", "port0", "sig$name"])
+    def test_special_wire_names_are_preserved(
+        self,
+        wires_manager,
+        sample_verilog_file,
+        mock_rule_manager,
+        wire_name,
+    ):
+        """WiresManager should render resolved names without additional validation."""
+        mock_rule_manager.resolve_wire_generation.return_value = (wire_name, None, None, True)
+        use_ports(wires_manager, [make_port(name="port")])
 
-        result = wires_manager.generate_wires_def(
-            sample_verilog_file,
-            'test_module',
-            pattern='greedy'
-        )
+        result = wires_manager.generate_wires_def(sample_verilog_file, "test_module")
 
-        assert 'port0' in result
-    
-    def test_ss003_multidimensional_port(self, wires_manager, multidim_array_file, mock_rule_manager):
-        """SS003: 多维数组端口"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = ('array_wire', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'multidim_module': {'ports': [Mock(name='array_in', direction='input', width='[7:0][3:0]')]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                multidim_array_file,
-                'multidim_module'
-            )
-            
-            assert '[7:0][3:0]' in result or 'wire' in result
-    
-    def test_ss004_parametric_width(self, wires_manager, parametric_module_file, mock_rule_manager):
-        """SS004: 参数化宽度"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = ('param_sig', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'param_module': {'ports': [Mock(name='data', direction='input', width='DATA_WIDTH')]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                parametric_module_file,
-                'param_module'
-            )
-            
-            assert 'DATA_WIDTH-1:0' in result or 'wire' in result
-    
-    def test_ss005_complex_expression_width(self, wires_manager, sample_verilog_file, mock_rule_manager):
-        """SS005: 复杂表达式宽度"""
-        # ✅ 修复: 4个返回值
-        mock_rule_manager.resolve_wire_generation.return_value = ('complex_sig', None, None, True)
-        
-        with patch('src.vcg_wires_manager.VerilogParser') as MockParser:
-            mock_parser_instance = MockParser.return_value
-            mock_parser_instance.parse_file.return_value = {
-                'test_module': {'ports': [Mock(name='port', direction='input', width='(A+B)*C-1')]}
-            }
-            
-            result = wires_manager.generate_wires_def(
-                sample_verilog_file,
-                'test_module'
-            )
-            
-            assert'wire' in result
+        assert result == f"wire           {wire_name};"
