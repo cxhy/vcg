@@ -20,45 +20,39 @@ along with VCG.  If not, see <https://www.gnu.org/licenses/>.
 #
 # Author: cxhy
 # Created: 2025-07-31
-# Description: 
+# Description:
 import os
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+
 from .vcg_rule_manager import VCGRuleManager
 from .vcg_instance_manager import InstanceManager
 from .vcg_wires_manager import WiresManager
 from .vcg_exceptions import VCGRuntimeError, VCGSyntaxError, VCGFileError, VCGParseError
 from .vcg_logger import get_vcg_logger
 
-class OrderedOutputManager:  
-    def __init__(self):
-        self.outputs: List[str] = []
-    
-    def add_text_output(self, text: str):
-        if text == '\n':
-            self.outputs.append('')
-        elif text.strip():
-            self.outputs.append(text.rstrip())
-        elif text and not text.strip():
-            if '\n' in text:
-                self.outputs.append('')
-    
-    def add_instance_output(self, instance_code: str):
-        if instance_code.strip():
-            self.outputs.append(instance_code)
-    
-    def add_wires_output(self, wires_code: str):
-        if wires_code.strip():
-            self.outputs.append(wires_code)
-    
+
+class OrderedOutputManager:
+    def __init__(self) -> None:
+        self.outputs: list[str] = []
+
+    def add(self, text: str) -> None:
+        self.outputs.append(text)
+
     def get_final_output(self) -> str:
         return '\n'.join(self.outputs)
-    
-    def clear(self):
+
+    def clear(self) -> None:
         self.outputs.clear()
 
+
 class VCGExecutionEngine:
-    
+
+    """Execute trusted VCG Python DSL blocks.
+
+    VCG blocks run with full Python builtins. This engine is a local
+    developer-tool executor, not a sandbox for untrusted templates.
+    """
+
     def __init__(self, macros=None):
         self.rule_manager = VCGRuleManager()
         self.output_manager = OrderedOutputManager()
@@ -67,90 +61,90 @@ class VCGExecutionEngine:
         self.logger = get_vcg_logger('ExecutionEngine')
 
     def expand_path(self, path_str: str) -> str:
-        expanded_path = os.path.expandvars(path_str.strip())
+        stripped_path = path_str.strip()
+        if not stripped_path:
+            raise VCGFileError("Empty file path")
+
+        expanded_path = os.path.expandvars(stripped_path)
         expanded_path = os.path.expanduser(expanded_path)
-        abs_path = str(Path(expanded_path).resolve())
-        return abs_path
+        resolved_path = Path(expanded_path).resolve()
+        if not resolved_path.exists():
+            raise VCGFileError(f"File not found: {path_str} -> {resolved_path}")
+        return str(resolved_path)
 
     def execute(self, python_code: str) -> str:
         try:
             self.logger.debug("Starting Python code execution")
-            
+
             self.rule_manager.reset()
             self.output_manager.clear()
-            
+
             context = self._create_execution_context()
-            
+
             exec(python_code, context)
-            
+
             return self.output_manager.get_final_output()
-            
+
+        except (VCGFileError, VCGParseError, VCGSyntaxError, VCGRuntimeError):
+            raise
         except Exception as e:
             self.logger.error(f"Execution error: {str(e)}")
-            raise VCGRuntimeError(f"Exec Error: {str(e)}")
-    
-    def _create_execution_context(self) -> dict:
-        context = {
+            raise VCGRuntimeError(f"Exec Error: {str(e)}") from e
+
+    def _create_execution_context(self) -> dict[str, object]:
+        return {
             '__builtins__': __builtins__,
-            'print': self._create_custom_print_func(),
-            'Instance': self._create_instance_func(),
-            'Connect': self._create_connect_func(),
-            'ConnectParam': self._create_connect_param_func(),
-            'WiresDef': self._create_wires_def_func(),
-            'WiresRule': self._create_wires_rule_func(),
+            'print': self._print,
+            'Instance': self._instance,
+            'Connect': self.rule_manager.add_signal_rule,
+            'ConnectParam': self.rule_manager.add_param_rule,
+            'WiresDef': self._wires_def,
+            'WiresRule': self.rule_manager.add_wire_rule,
         }
-        return context
-    
-    def _create_instance_func(self):
-        def Instance(file_path: str, module_name: str, instance_name: str):
-            file_path = self.expand_path(file_path)
-            instance_code = self.instance_manager.generate_instance(
-                file_path, module_name, instance_name
-            )
-            if instance_code.strip():
-                self.output_manager.add_instance_output(instance_code)
-            
-            self.rule_manager.reset()
-            self.logger.debug(f"Auto-reset rules after Instance '{instance_name}' generation completed")
-        return Instance
-    
-    def _create_wires_def_func(self):
-        def WiresDef(file_path: str, module_name: str, port_type: Optional[str] = None, pattern: str = 'greedy'):
-            file_path = self.expand_path(file_path)
-            wire_code = self.wires_manager.generate_wires_def(
-                file_path, module_name, port_type, pattern
-            )
-            if wire_code.strip():
-                self.output_manager.add_wires_output(wire_code)
-            self.rule_manager.reset()
-            self.logger.debug(f"Auto-reset rules after WiresDef for module '{module_name}' generation completed")
-        
-        return WiresDef
-    
-    def _create_connect_func(self):
-        def Connect(source_pattern: str, target_pattern: str, port_type: Optional[str] = None):
-            self.rule_manager.add_signal_rule(source_pattern, target_pattern, port_type)
-        
-        return Connect
-    
-    def _create_connect_param_func(self):
-        def ConnectParam(param_name: str, param_value: str):
-            self.rule_manager.add_param_rule(param_name, param_value)
-        
-        return ConnectParam
-    
-    def _create_wires_rule_func(self):
-        def WiresRule(port_pattern: str, wire_pattern: str, width: Optional[str] = None, expression: Optional[str] = None):
-            self.rule_manager.add_wire_rule(port_pattern, wire_pattern, width, expression)
-        
-        return WiresRule
-    
-    def _create_custom_print_func(self):
-        def custom_print(*args, sep=' ', end='\n', file=None, flush=False):
-            if file is not None:
-                print(*args, sep=sep, end=end, file=file, flush=flush)
-                return
-            
-            text = sep.join(str(arg) for arg in args) + end
-            self.output_manager.add_text_output(text)
-        return custom_print
+
+    def _instance(self, file_path: str, module_name: str, instance_name: str) -> None:
+        resolved_path = self.expand_path(file_path)
+        instance_code = self.instance_manager.generate_instance(
+            resolved_path, module_name, instance_name
+        )
+        self._add_generated_output(instance_code)
+        self.rule_manager.reset()
+        self.logger.debug(f"Auto-reset rules after Instance '{instance_name}' generation completed")
+
+    def _wires_def(
+        self,
+        file_path: str,
+        module_name: str,
+        port_type: str | None = None,
+        pattern: str = 'greedy',
+    ) -> None:
+        resolved_path = self.expand_path(file_path)
+        wire_code = self.wires_manager.generate_wires_def(
+            resolved_path, module_name, port_type, pattern
+        )
+        self._add_generated_output(wire_code)
+        self.rule_manager.reset()
+        self.logger.debug(f"Auto-reset rules after WiresDef for module '{module_name}' generation completed")
+
+    def _add_generated_output(self, output: str) -> None:
+        if output.strip():
+            self.output_manager.add(output)
+
+    def _print(self, *args, sep=' ', end='\n', file=None, flush=False) -> None:
+        if file is not None:
+            print(*args, sep=sep, end=end, file=file, flush=flush)
+            return
+
+        text = sep.join(str(arg) for arg in args) + end
+        normalized = self._normalize_print_output(text)
+        if normalized is not None:
+            self.output_manager.add(normalized)
+
+    def _normalize_print_output(self, text: str) -> str | None:
+        if text == '\n':
+            return ''
+        if text.strip():
+            return text.rstrip()
+        if text and '\n' in text:
+            return ''
+        return None
