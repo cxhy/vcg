@@ -13,6 +13,7 @@ from pathlib import Path
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 from src.VerilogPreprocess import VerilogPreprocess
+from src.vcg_exceptions import VCGFileError, VCGParseError
 
 
 #============================================================================
@@ -133,9 +134,9 @@ class TestFileReading:
     def test_read_nonexistent_file(self):
         """功能点 3.2.2: 文件不存在"""
         vp = VerilogPreprocess()
-        with pytest.raises(FileNotFoundError) as exc_info:
+        with pytest.raises(VCGFileError) as exc_info:
             vp.read_file("nonexistent_file_12345.v")
-        assert "Verilog File Missing" in str(exc_info.value)
+        assert "Verilog file not found" in str(exc_info.value)
 
 
 # ============================================================================
@@ -167,6 +168,19 @@ wire test;"""
         vp = VerilogPreprocess()
         result = vp.remove_pre_module_content(code)
         assert result.strip() == "" or result.strip() == code.strip()
+
+    def test_attribute_line_before_module_does_not_drop_module(self):
+        """功能点 3.3.3: module 前 attribute 行不导致 module 丢失"""
+        code = """// Header comment
+(* keep_hierarchy = "yes" *)
+module attributed_module(
+  input clk
+);
+endmodule"""
+        vp = VerilogPreprocess()
+        result = vp.preprocess_string(code)
+        assert "module attributed_module(" in result
+        assert "input clk" in result
 
 
 # ============================================================================
@@ -215,6 +229,17 @@ endmodule"""
         ports, end = vp.extract_module_ports_section(code)
         assert "parameter WIDTH" in ports
         assert "input wire" in ports
+
+    def test_extract_localparam_declaration(self):
+        """功能点 3.4.3: localparam 声明"""
+        code = """module test;
+  localparam WIDTH = 32;
+  input wire [WIDTH-1:0] data;
+endmodule"""
+        vp = VerilogPreprocess()
+        ports, end = vp.extract_module_ports_section(code)
+        assert "localparam WIDTH = 32;" in ports
+        assert "input wire [WIDTH-1:0] data;" in ports
     
     def test_extract_inout_declaration(self):
         """功能点 3.4.3: inout 声明"""
@@ -237,6 +262,47 @@ endmodule"""
         # 应该不包含 wire 和 assign（因为它们不是端口声明）
         assert "input clk;" in ports
         # 根据实现，可能在遇到非声明语句后停止
+
+    def test_comment_semicolon_does_not_truncate_module_header(self):
+        """功能点 3.4.6: module header 注释中的分号不截断声明"""
+        code = """module test(
+  // comment with ; should not close header
+  input clk,
+  output done
+);
+endmodule"""
+        vp = VerilogPreprocess()
+        result = vp.preprocess_string(code)
+        assert "input clk" in result
+        assert "output done" in result
+        assert ");" in result
+
+    def test_comment_semicolon_does_not_truncate_port_declaration(self):
+        """功能点 3.4.6: 端口声明注释中的分号不截断声明"""
+        code = """module test;
+  input wire [7:0] /* comment ; inside */
+    data;
+  output done;
+endmodule"""
+        vp = VerilogPreprocess()
+        result = vp.preprocess_string(code)
+        assert "input wire [7:0]" in result
+        assert "data;" in result
+        assert "output done;" in result
+
+    def test_block_comment_port_text_does_not_leak_into_output(self):
+        """回归: 多行块注释中的端口文本不泄漏到预处理输出"""
+        code = """module block_comment_leak(
+  input wire clk
+);
+  /* `ifdef COMMENT_ONLY
+     input hidden;
+     `endif */
+endmodule"""
+        vp = VerilogPreprocess()
+        result = vp.preprocess_string(code)
+        assert "input wire clk" in result
+        assert "hidden" not in result
 
 
 # ============================================================================
@@ -516,6 +582,100 @@ endmodule"""
         assert "input port2;" not in result
         assert "input port3;" in result
 
+    def test_define_before_ifdef_activates_branch(self):
+        """功能点 3.5.6: define 后 ifdef 生效"""
+        code = """module test;
+`define ENABLE
+`ifdef ENABLE
+  input enabled;
+`endif
+endmodule"""
+        vp = VerilogPreprocess()
+        result = vp.preprocess_string(code)
+        assert "input enabled;" in result
+        assert vp.get_macros()["ENABLE"] == "1"
+
+    def test_undef_before_ifdef_deactivates_branch(self):
+        """功能点 3.5.6: undef 后 ifdef 失效"""
+        code = """module test;
+`define ENABLE
+`undef ENABLE
+`ifdef ENABLE
+  input enabled;
+`else
+  input disabled;
+`endif
+endmodule"""
+        vp = VerilogPreprocess()
+        result = vp.preprocess_string(code)
+        assert "input enabled;" not in result
+        assert "input disabled;" in result
+        assert "ENABLE" not in vp.get_macros()
+
+    def test_define_in_inactive_branch_does_not_activate_later_ifdef(self):
+        """功能点 3.5.6: 非活动分支内 define 不生效"""
+        code = """module test;
+`ifdef NEVER_DEFINED
+`define ENABLE
+`endif
+`ifdef ENABLE
+  input enabled;
+`else
+  input disabled;
+`endif
+endmodule"""
+        vp = VerilogPreprocess()
+        result = vp.preprocess_string(code)
+        assert "input enabled;" not in result
+        assert "input disabled;" in result
+        assert "ENABLE" not in vp.get_macros()
+
+    def test_line_comment_directives_do_not_affect_condition_stack(self):
+        """功能点 3.5.7: 整行注释中的预处理指令不影响条件栈"""
+        code = """module test;
+// `ifdef COMMENT_ONLY
+  input visible;
+// `endif
+endmodule"""
+        vp = VerilogPreprocess()
+        result = vp.preprocess_string(code)
+        assert "input visible;" in result
+
+    def test_trailing_comment_directives_do_not_affect_condition_stack(self):
+        """功能点 3.5.7: 行尾注释中的预处理指令不影响条件栈"""
+        code = """module test;
+  input visible; // `ifdef COMMENT_ONLY
+  output done; // `endif
+endmodule"""
+        vp = VerilogPreprocess()
+        result = vp.preprocess_string(code)
+        assert "input visible;" in result
+        assert "output done;" in result
+
+    def test_block_comment_directives_do_not_affect_condition_stack(self):
+        """功能点 3.5.7: 块注释中的预处理指令不影响条件栈"""
+        code = """module test;
+/* `ifdef COMMENT_ONLY
+   `else
+   `endif */
+  input visible;
+endmodule"""
+        vp = VerilogPreprocess()
+        result = vp.preprocess_string(code)
+        assert "input visible;" in result
+
+    @pytest.mark.parametrize("directive", ["`else", "`elsif ENABLE", "`endif"])
+    def test_orphan_conditional_directives_raise_parse_error(self, directive):
+        """功能点 3.5.8: 孤立 else/elsif/endif 抛 VCGParseError"""
+        code = f"""module test;
+  input before;
+{directive}
+  input after;
+endmodule"""
+        vp = VerilogPreprocess()
+        with pytest.raises(VCGParseError):
+            vp.preprocess_string(code)
+
 
 # ============================================================================
 # 3.6 完整预处理流程测试
@@ -567,10 +727,9 @@ endmodule"""
         assert "input enable_port;" in result
         assert "input common_port;" in result
     def test_preprocess_file_not_found_runtime_error(self):
-        """功能点 3.6.3: 文件不存在时的 RuntimeError"""
+        """功能点 3.6.3: 文件不存在时抛 VCGFileError"""
         vp = VerilogPreprocess()
-        # 根据实现，可能是FileNotFoundError 或 RuntimeError
-        with pytest.raises((FileNotFoundError, RuntimeError)):
+        with pytest.raises(VCGFileError):
             vp.preprocess_file("nonexistent_12345.v")
 
 
@@ -627,27 +786,24 @@ endmodule"""
         assert macros["MACRO"] == ""
     
     def test_unclosed_ifdef(self):
-        """边界条件 4.3: 无endif"""
+        """边界条件 4.3: 无 endif 抛 VCGParseError"""
         code = """module test;
 `ifdef ENABLE
   input enable;
 endmodule"""
         vp = VerilogPreprocess({"ENABLE": "1"})
-        # 应该能处理到文件末尾
-        result = vp.preprocess_string(code)
-        # 根据实现可能有不同行为，但不应崩溃
-        assert "module test;" in result
+        with pytest.raises(VCGParseError):
+            vp.preprocess_string(code)
     
     def test_extra_endif(self):
-        """边界条件 4.3: 多余endif"""
+        """边界条件 4.3: 多余 endif 抛 VCGParseError"""
         code = """module test;
   input port;
 `endif
 endmodule"""
         vp = VerilogPreprocess()
-        # 应该安全忽略
-        result = vp.preprocess_string(code)
-        assert "module test;" in result
+        with pytest.raises(VCGParseError):
+            vp.preprocess_string(code)
     
     def test_consecutive_conditional_blocks(self):
         """边界条件 4.3: 连续条件块"""

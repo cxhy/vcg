@@ -814,6 +814,21 @@ class TestVerilogParserBoundaryConditions:
         info = self.parser.get_module_info()
         assert info['ports'][0]['name'] == 'clk'
 
+    def test_b14_block_comment_port_text_does_not_create_ast_port(self):
+        """B14: 块注释中的端口文本不应进入 AST"""
+        code = """module block_comment_leak(
+  input wire clk
+);
+  /* `ifdef COMMENT_ONLY
+     input hidden;
+     `endif */
+endmodule"""
+        self.parser.parse_string(code)
+        info = self.parser.get_module_info()
+        port_names = [port['name'] for port in info['ports']]
+        assert port_names == ['clk']
+        assert 'hidden' not in port_names
+
 
 class TestVerilogParserFileOperations:
     """文件操作测试"""
