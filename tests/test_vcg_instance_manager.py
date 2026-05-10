@@ -6,6 +6,7 @@ InstanceManager模块的单元测试
 import os
 import sys
 import pytest
+from dataclasses import FrozenInstanceError, is_dataclass
 from unittest.mock import Mock, MagicMock, patch
 from typing import List, Optional
 
@@ -115,6 +116,72 @@ class TestInitialization:
     def test_get_default_alignment(self, instance_manager):
         """TC-INIT-004: 测试获取默认对齐宽度"""
         assert instance_manager.get_alignment() == 18
+
+
+class TestStructuredConnections:
+    """测试结构化连接对象"""
+
+    def test_connection_types_are_frozen_dataclasses(self):
+        """TC-STRUCT-001: 连接对象必须是 frozen dataclass"""
+        from src.vcg_instance_manager import ParameterConnection, PortConnection
+
+        port = MockPortInfo('clk', 'input')
+        parameter = MockParameterInfo('WIDTH')
+        port_connection = PortConnection(port=port, signal='sys_clk')
+        parameter_connection = ParameterConnection(parameter=parameter, value='32')
+
+        assert is_dataclass(port_connection)
+        assert is_dataclass(parameter_connection)
+
+        with pytest.raises(FrozenInstanceError):
+            port_connection.signal = 'other_clk'
+        with pytest.raises(FrozenInstanceError):
+            parameter_connection.value = '64'
+
+    def test_generate_port_connections_returns_ordered_structured_list(self, instance_manager):
+        """TC-STRUCT-002: 端口连接生成返回有序结构化列表"""
+        ports = [
+            MockPortInfo('clk', 'input'),
+            MockPortInfo('rst_n', 'input'),
+        ]
+
+        connections = instance_manager._generate_port_connections(ports)
+
+        assert [connection.port.name for connection in connections] == ['clk', 'rst_n']
+        assert [connection.signal for connection in connections] == ['clk_signal', 'rst_n_signal']
+
+    def test_generate_param_connections_returns_only_overridden_structured_list(self):
+        """TC-STRUCT-003: 参数连接只包含被规则覆盖的参数"""
+        rule_manager = MockVCGRuleManager(param_map={'WIDTH': '32'})
+        manager = InstanceManager(rule_manager)
+        parameters = [MockParameterInfo('WIDTH'), MockParameterInfo('DEPTH')]
+
+        connections = manager._generate_param_connections(parameters)
+
+        assert [connection.parameter.name for connection in connections] == ['WIDTH']
+        assert [connection.value for connection in connections] == ['32']
+
+    def test_vcg_runtime_error_from_rule_manager_is_not_rewrapped(
+        self, mock_verilog_parser
+    ):
+        """TC-STRUCT-004: RuleManager 的 VCGRuntimeError 必须原样透传"""
+        from src.vcg_exceptions import VCGRuntimeError
+
+        rule_manager = Mock()
+        runtime_error = VCGRuntimeError("rule failed")
+        rule_manager.resolve_signal_connection.side_effect = runtime_error
+
+        mock_ast = MockAST(ports=[MockPortInfo('clk', 'input')])
+        mock_parser_instance = Mock()
+        mock_parser_instance.parse_file.return_value = mock_ast
+        mock_verilog_parser.return_value = mock_parser_instance
+
+        manager = InstanceManager(rule_manager)
+
+        with pytest.raises(VCGRuntimeError) as exc_info:
+            manager.generate_instance('test.v', 'test_module', 'u_test')
+
+        assert exc_info.value is runtime_error
 
 
 # ============================================================================

@@ -14,10 +14,9 @@
 
 剩余值得开 TASK 的模块主要是：
 
-1. `src/vcg_instance_manager.py`
-2. `src/vcg_wires_manager.py`
-3. `src/VerilogLexer.py`
-4. `src/VerilogParser.py` 的异常类型收尾
+1. `src/vcg_wires_manager.py`
+2. `src/VerilogLexer.py`
+3. `src/VerilogParser.py` 的异常类型收尾
 
 `src/vcg_exceptions.py` 已完成 TASK-05，但尚未提交时，本文件按“已完成实现、待提交”记录。
 
@@ -32,6 +31,7 @@
 | `src/vcg_execution_engine.py` | TASK-04 完成 | `f4fe971 refactor: simplify VCG execution engine` |
 | `src/vcg_exceptions.py` | TASK-05 已实现，待提交 | `doc/task_05_refactor_vcg_exceptions.md` |
 | 根目录 `vcg.py` | TASK-06 已实现，待提交 | `doc/task_06_refactor_cli_entry.md` |
+| `src/vcg_instance_manager.py` | TASK-07 已实现，待提交 | `doc/task_07_refactor_vcg_instance_manager.md` |
 | `src/vcg_logger.py` | 已完成手工重构 | `doc/delivery_manual_vcg_logger_refactor.md` |
 | `src/vcg_rule_manager.py` | 已完成结构性重构 | `936dfdb refactor: harden rule manager` |
 | `src/VerilogLexer.py` 字符串转义 bug | 已完成关键修复 | `18a3c94 fix: correct STRING_LITERAL escape order in lexer` |
@@ -40,26 +40,6 @@
 | `src/vcg_instance_manager.py` 端口计数恒 0 | 已完成关键修复 | `2f9ecd5 fix: count port connections directly instead of grepping generated text` |
 
 ## P0：建议下一批任务
-
-### TASK-07 候选：`src/vcg_instance_manager.py`
-
-这个模块真 bug 已修，但结构仍偏字符串渲染脚本。适合做一次数据结构和渲染层分离。
-
-主要问题：
-
-- `_generate_port_connections()` 返回两个 dict：`connections` 和 `port_infos`，靠 key 同步。
-- 渲染层仍检查 `if port_name in port_infos`，说明数据结构没有表达完整事实。
-- `_ALIGN = 18` 是实例属性魔法数，且注释列使用 `_ALIGN * 2`。
-- `_render_parameter_section()` 与 `_render_port_section()` 都重复处理“最后一项不加逗号”。
-- `set_alignment()` / `get_alignment()` 是公开 API，需保留或通过测试确认迁移策略。
-- `except Exception` 仍包装为 `VCGRuntimeError`，需要明确 VCG 子类透传边界。
-
-建议范围：
-
-- 引入 `PortConnection(frozen=True)` 和 `ParameterConnection(frozen=True)`。
-- 渲染函数接受结构化列表，而不是多 dict 并行传递。
-- 抽出逗号渲染 helper，保持输出完全兼容。
-- 保留 `set_alignment()` / `get_alignment()`，避免破坏既有测试和用户 API。
 
 ### TASK-08 候选：`src/vcg_wires_manager.py`
 
@@ -137,7 +117,6 @@ Parser 已经完成 silent failure 的一轮结构性修复，当前不建议做
 
 ## 建议执行顺序
 
-1. TASK-07：`src/vcg_instance_manager.py` 结构化连接数据 + 渲染清理。
-2. TASK-08：`src/vcg_wires_manager.py` 宽度格式化拆分 + 多维识别修正。
-3. TASK-09：`src/VerilogLexer.py` token/`VCGSyntaxError` 策略。
-4. TASK-10：`src/VerilogParser.py` 异常语义收尾。
+1. TASK-08：`src/vcg_wires_manager.py` 宽度格式化拆分 + 多维识别修正。
+2. TASK-09：`src/VerilogLexer.py` token/`VCGSyntaxError` 策略。
+3. TASK-10：`src/VerilogParser.py` 异常语义收尾。
