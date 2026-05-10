@@ -20,386 +20,437 @@ along with VCG.  If not, see <https://www.gnu.org/licenses/>.
 #
 # Author: cxhy
 # Created: 2025-07-31
-# Description: 
+# Description:
+import ast
 import re
-from typing import List, Dict, Optional, Tuple, Any
-from .VerilogAst import PortInfo, PortType
+from dataclasses import dataclass
+from typing import Optional
+
+from .VerilogAst import PortInfo
 from .vcg_logger import get_vcg_logger
 
-class VCGRuleManager:
-    
-    def __init__(self):
-        self.rules = {
-            'signal_rules': [],   
-            'param_rules': [],    
-            'wire_rules': []      
-        }
-        self.logger = get_vcg_logger('RuleManager')
-        self.safe_functions = {
-            'upper': str.upper,
-            'lower': str.lower,
-            'title': str.title,
-            'capitalize': str.capitalize,
-            'replace': str.replace,
-            'strip': str.strip,
-            'lstrip': str.lstrip,
-            'rstrip': str.rstrip,
-        }
-    
-    def add_signal_rule(self, source_pattern: str, target_pattern: str, port_direction: Optional[str] = None):
-        self.logger.debug(f"Adding signal rule: source='{source_pattern}', "
-                         f"target='{target_pattern}', port_direction='{port_direction}'")
-        processed_target, comments = self._extract_inline_comments(target_pattern)
-        self.logger.debug(f"Processed target pattern: '{processed_target}', "
-                         f"extracted {len(comments)} comments")
-        
-        rule = {
-            'type': 'signal',
-            'source': source_pattern,
-            'target': processed_target,
-            'comments': comments,
-            'port_direction': port_direction.lower() if port_direction else None,
-            'priority': len(self.rules['signal_rules'])
-        }
-        
-        self.rules['signal_rules'].append(rule)
-        self.logger.debug(f"Added signal rule #{rule['priority']}: '{source_pattern}' -> '{target_pattern}'")
-        self.logger.info(f"Total signal rules: {len(self.rules['signal_rules'])}")
-    
-    def add_param_rule(self, param_name: str, param_value: str):
-        self.logger.debug(f"Adding parameter rule: name='{param_name}', value='{param_value}'")
-        rule = {
-            'type': 'param',
-            'param_name': param_name,
-            'param_value': param_value,
-            'priority': len(self.rules['param_rules'])
-        }
-        self.rules['param_rules'].append(rule)
-        self.logger.debug(f"Added parameter rule #{rule['priority']}: {param_name} = {param_value}")
-        self.logger.info(f"Total parameter rules: {len(self.rules['param_rules'])}")
-    
-    def add_wire_rule(self, port_pattern: str, wire_pattern: str,
-                     width: Optional[str] = None, expression: Optional[str] = None):
-        self.logger.debug(f"Adding wire rule: port_pattern='{port_pattern}', wire_pattern='{wire_pattern}', width='{width}', expression='{expression}'")
-        processed_pattern, comments = self._extract_inline_comments(wire_pattern)
-        self.logger.debug(f"Processed wire pattern: '{processed_pattern}', extracted {len(comments)} comments")
-        
-        rule = {
-            'type': 'wire',
-            'port_pattern': port_pattern,
-            'wire_pattern': processed_pattern,
-            'comments': comments,
-            'width': width,
-            'expression': expression,
-            'priority': len(self.rules['wire_rules'])
-        }
-        
-        self.rules['wire_rules'].append(rule)
-        self.logger.debug(f"Added wire rule #{rule['priority']}: '{port_pattern}' -> '{wire_pattern}'")
-        self.logger.info(f"Total wire rules: {len(self.rules['wire_rules'])}")
+INLINE_BINARY_THRESHOLD = 8
+FUNCTION_PATTERN = re.compile(r'\$\{([^}]+)\}')
+FUNCTION_CALL_PATTERN = re.compile(r'^([A-Za-z_][A-Za-z0-9_]*)\((.*)\)$')
+GROUP_REF_PATTERN = re.compile(r'^\*(\d*)$')
 
-    def reset(self):
-        total_rules = sum(len(rules) for rules in self.rules.values())
-        self.logger.info(f"Resetting all rules (total: {total_rules})")
-        self.rules = {
+
+@dataclass(frozen=True)
+class SignalRule:
+    source: str
+    target: str
+    comments: tuple[str, ...]
+    port_direction: Optional[str]
+    priority: int
+
+
+@dataclass(frozen=True)
+class ParamRule:
+    pattern: str
+    value: str
+    priority: int
+
+
+@dataclass(frozen=True)
+class WireRule:
+    port_pattern: str
+    wire_pattern: str
+    comments: tuple[str, ...]
+    width: Optional[str]
+    expression: Optional[str]
+    priority: int
+
+
+class VCGRuleManager:
+
+    def __init__(self) -> None:
+        self.rules = self._empty_rules()
+        self.logger = get_vcg_logger('RuleManager')
+
+    @staticmethod
+    def _empty_rules() -> dict[str, list]:
+        return {
             'signal_rules': [],
-            'param_rules': [], 
-            'wire_rules': []
+            'param_rules': [],
+            'wire_rules': [],
         }
-        self.logger.debug(f"Reset all rules (cleared {total_rules} rules)")
-    
+
+    def add_signal_rule(
+        self,
+        source_pattern: str,
+        target_pattern: str,
+        port_direction: Optional[str] = None,
+    ) -> None:
+        processed_target, comments = self._extract_inline_comments(target_pattern)
+        rule = SignalRule(
+            source=source_pattern,
+            target=processed_target,
+            comments=tuple(comments),
+            port_direction=port_direction.lower() if port_direction else None,
+            priority=len(self.rules['signal_rules']),
+        )
+        self.rules['signal_rules'].append(rule)
+        self.logger.debug(
+            "Added signal rule #%s: %r -> %r",
+            rule.priority, source_pattern, target_pattern
+        )
+
+    def add_param_rule(self, param_name: str, param_value: str) -> None:
+        rule = ParamRule(
+            pattern=param_name,
+            value=param_value,
+            priority=len(self.rules['param_rules']),
+        )
+        self.rules['param_rules'].append(rule)
+        self.logger.debug(
+            "Added parameter rule #%s: %s = %s",
+            rule.priority, param_name, param_value
+        )
+
+    def add_wire_rule(
+        self,
+        port_pattern: str,
+        wire_pattern: str,
+        width: Optional[str] = None,
+        expression: Optional[str] = None,
+    ) -> None:
+        processed_pattern, comments = self._extract_inline_comments(wire_pattern)
+        rule = WireRule(
+            port_pattern=port_pattern,
+            wire_pattern=processed_pattern,
+            comments=tuple(comments),
+            width=width,
+            expression=expression,
+            priority=len(self.rules['wire_rules']),
+        )
+        self.rules['wire_rules'].append(rule)
+        self.logger.debug(
+            "Added wire rule #%s: %r -> %r",
+            rule.priority, port_pattern, wire_pattern
+        )
+
+    def reset(self) -> None:
+        total_rules = sum(len(rules) for rules in self.rules.values())
+        self.rules = self._empty_rules()
+        self.logger.debug("Reset all rules (cleared %s rules)", total_rules)
 
     def resolve_signal_connection(self, port: PortInfo) -> str:
         signal_name = port.name
-        rules = self.rules['signal_rules']
-        port_dir = port.direction if port.direction else 'unknown'
-        self.logger.debug(f"Resolving signal connection for port: '{signal_name}', "
-                         f"direction: {port_dir}, port_type: {port.port_type.value}")
-        self.logger.debug(f"Available signal rules: {len(rules)}")
+        for rule in reversed(self.rules['signal_rules']):
+            if not self._signal_rule_matches(rule, port):
+                continue
 
-        for rule_index, rule in enumerate(reversed(rules)):
-            rule_num = len(rules) - 1 - rule_index
-            self.logger.debug(f"Checking signal rule #{rule_num}: "
-                             f"source='{rule['source']}', target='{rule['target']}', "
-                             f"port_direction='{rule['port_direction']}'")
-
-            if rule['port_direction'] is not None:
-                direction_match = self._check_port_direction_match(port, rule['port_direction'])
-                self.logger.debug(f"Direction check: required='{rule['port_direction']}', "
-                                f"port_direction='{port_dir}', match={direction_match}")
-                if not direction_match:
-                    continue
-
-            pattern_match = self._match_pattern(signal_name, rule['source'])
-            self.logger.debug(f"Pattern match: signal='{signal_name}', pattern='{rule['source']}', match={pattern_match}")
-                
-            if pattern_match:
-                self.logger.debug(f"Rule #{rule_num} matched, applying pattern substitution")
-                pattern_result = self._apply_pattern_substitution( signal_name, rule['source'], rule['target'])
-                self.logger.debug(f"Pattern substitution result: '{pattern_result}'")
-
-                final_result = self._handle_literal_value_if_needed(pattern_result, port)
-                self.logger.debug(f"After literal value handling: '{final_result}'")
-
-                if rule.get('comments'):
-                    self.logger.debug(f"Restoring {len(rule['comments'])} inline comments")
-                    final_result = self._restore_inline_comments(final_result, rule['comments'])
-                    self.logger.debug(f"After comment restoration: '{final_result}'")
-
-                self.logger.debug(f"Applied signal rule #{len(rules)-1-rule_index} to '{signal_name}' -> '{final_result}'")
-                self.logger.info(f"Signal connection resolved: '{signal_name}' -> '{final_result}'")
-                return final_result
+            result = self._apply_pattern_substitution(
+                signal_name, rule.source, rule.target
+            )
+            result = self._handle_literal_value_if_needed(result, port)
+            result = self._restore_inline_comments(result, rule.comments)
+            self.logger.debug(
+                "Signal connection resolved by rule #%s: %r -> %r",
+                rule.priority, signal_name, result
+            )
+            return result
 
         return signal_name
 
-    def _check_port_direction_match(self, port: PortInfo, required_direction: str) -> bool:
-        self.logger.debug(f"Checking port direction match: required='{required_direction}'")
-
-        if port.direction is None:
-            self.logger.debug("Port has no direction, skipping direction check (allowing match)")
-            return True
-        
-        port_direction = port.direction.lower()
-        required_direction_lower = required_direction.lower()
-        match_result = port_direction == required_direction_lower
-        
-        self.logger.debug(f"Direction check: port_direction='{port_direction}', "
-                         f"required='{required_direction_lower}', match={match_result}")
-        return match_result
-    
     def resolve_param_connection(self, param_name: str) -> Optional[str]:
-        rules = self.rules['param_rules']
-
-        self.logger.debug(f"Resolving parameter connection for: '{param_name}'")
-        self.logger.debug(f"Available parameter rules: {len(rules)}")
-        
-        for rule_index, rule in enumerate(reversed(rules)):
-            rule_num = len(rules) - 1 - rule_index
-            self.logger.debug(f"Checking parameter rule #{rule_num}: pattern='{rule['param_name']}', value='{rule['param_value']}'")
-            if self._match_pattern(param_name, rule['param_name']):
-                self.logger.debug(f"Parameter rule #{rule_num} matched")
-                self.logger.info(f"Parameter connection resolved: '{param_name}' -> '{rule['param_value']}'")
-                return rule['param_value']
-            
-        self.logger.debug(f"No parameter rule matched for '{param_name}'")
+        for rule in reversed(self.rules['param_rules']):
+            if self._match_pattern(param_name, rule.pattern):
+                self.logger.debug(
+                    "Parameter connection resolved by rule #%s: %r -> %r",
+                    rule.priority, param_name, rule.value
+                )
+                return rule.value
         return None
-    
-    def resolve_wire_generation(self, port: PortInfo, pattern: str = 'greedy') -> Tuple[str, Optional[str], Optional[str], bool]:
+
+    def resolve_wire_generation(
+        self,
+        port: PortInfo,
+        pattern: str = 'greedy',
+    ) -> tuple[str, Optional[str], Optional[str], bool]:
         port_name = port.name
-        rules = self.rules['wire_rules']
-
-        self.logger.debug(f"Resolving wire generation for port: '{port_name}', pattern: '{pattern}'")
-        self.logger.debug(f"Available wire rules: {len(rules)}")
-
         if not self._should_generate_wire_for_port(port):
-            self.logger.debug(f"Port '{port_name}' should not generate wire "
-                            f"(port_type: {port.port_type.value})")
             return "", None, None, False
 
-        for rule_index, rule in enumerate(reversed(rules)):
-            rule_num = len(rules) - 1 - rule_index
-            self.logger.debug(f"Checking wire rule #{rule_num}: pattern='{rule['port_pattern']}', wire='{rule['wire_pattern']}'")
-            
-            if self._match_pattern(port_name, rule['port_pattern']):
-                self.logger.debug(f"Wire rule #{rule_num} matched for port '{port_name}'")
+        for rule in reversed(self.rules['wire_rules']):
+            if not self._match_pattern(port_name, rule.port_pattern):
+                continue
 
-                pattern_result = self._apply_pattern_substitution(port_name, rule['port_pattern'], rule['wire_pattern'])
-                self.logger.debug(f"Wire pattern '{rule['wire_pattern']}' → '{pattern_result}'")
+            wire_name = self._apply_pattern_substitution(
+                port_name, rule.port_pattern, rule.wire_pattern
+            )
+            wire_name = self._handle_literal_value_if_needed(wire_name, port)
+            wire_name = self._restore_inline_comments(wire_name, rule.comments)
+            expression = self._resolve_wire_expression(rule, port_name)
+            self.logger.debug(
+                "Wire generation resolved by rule #%s: name=%r width=%r expr=%r",
+                rule.priority, wire_name, rule.width, expression
+            )
+            return wire_name, rule.width, expression, True
 
-                final_result = self._handle_literal_value_if_needed(pattern_result, port)
-                self.logger.debug(f"After literal value handling: '{final_result}'")
-
-                if rule.get('comments'):
-                    self.logger.debug(f"Restoring {len(rule['comments'])} inline comments")
-                    final_result = self._restore_inline_comments(final_result, rule['comments'])
-                    self.logger.debug(f"After comment restoration: '{final_result}'")
-                
-                width = rule.get('width')
-
-                expression = rule.get('expression')
-                self.logger.debug(f"Rule width: '{width}', expression: '{expression}'")
-
-                if expression:
-                    original_expression = expression
-                    expression = self._apply_pattern_substitution(port_name, rule['port_pattern'], expression)
-                    self.logger.debug(f"Expression pattern '{original_expression}' → '{expression}'")
-                
-                self.logger.info(f"Generated wire: name='{final_result}', width='{width}', expression='{expression}'")
-                return final_result, width, expression, True
-        
         if pattern == 'lazy':
-            self.logger.debug(f"No wire rule matched for '{port_name}' in lazy mode")
             return "", None, None, False
-        else:  # greedy
-            self.logger.debug(f"No wire rule matched for '{port_name}', using port name as wire name")
-            return port_name, None, None, False
-        
+        return port_name, None, None, False
 
-    def _handle_literal_value_if_needed(self, value: str, port: PortInfo) -> str:
-        stripped_value = value.strip()
-        self.logger.debug(f"Checking if value needs literal conversion: '{stripped_value}'")
-
-        if value.strip() in ['0', '1']:
-            self.logger.debug(f"Value '{stripped_value}' is a literal, generating width literal")
-            result = self._generate_width_literal(port, stripped_value)
-            self.logger.debug(f"Width literal generated: '{result}'")
-            return result
-        
-        self.logger.debug(f"Value '{stripped_value}' is not a literal, returning as-is")    
-        
-        return value
-    
-
-    def _apply_pattern_substitution(self, input_name: str, source_pattern: str, 
-                                   target_pattern: str) -> str:
-        self.logger.debug(f"Applying pattern substitution: input='{input_name}', "
-                         f"source='{source_pattern}', target='{target_pattern}'")
-        if '*' not in source_pattern:
-            self.logger.debug("Source pattern has no wildcards, returning target pattern as-is")
-            return target_pattern
-
-        escaped_pattern = re.escape(source_pattern).replace('\\*', '(.*)')
-        self.logger.debug(f"Escaped regex pattern: '{escaped_pattern}'")
-
-        match = re.match(f'^{escaped_pattern}$', input_name)
-        
-        if not match:
-            self.logger.debug(f"Pattern '{escaped_pattern}' did not match input '{input_name}', returning target pattern")
-            return target_pattern
-            
-        groups = match.groups()
-        self.logger.debug(f"Pattern matched, captured groups: {groups}")
-        
-        result = target_pattern
-
-        function_pattern = r'\$\{([^}]+)\}'
-        function_matches = re.findall(function_pattern, result)
-        if function_matches:
-            self.logger.debug(f"Found {len(function_matches)} function calls: {function_matches}")
-            result = re.sub(function_pattern, 
-                           lambda m: self._execute_function_call(m.group(1), groups), 
-                           result)
-            self.logger.debug(f"After function processing: '{result}'")
-        
-        for i, group in enumerate(groups):
-            old_result = result
-            result = result.replace('*', group, 1)
-            self.logger.debug(f"Replaced wildcard #{i} with '{group}': '{old_result}' -> '{result}'")
-
-        self.logger.debug(f"Pattern substitution complete: '{result}'")
-        return result
-    
-    def _extract_inline_comments(self, target_pattern: str) -> Tuple[str, List[str]]:
-        self.logger.debug(f"Extracting inline comments from: '{target_pattern}'")
-
-        comments = []
-        comment_pattern = r'/\*([^*]*(?:\*(?!/)[^*]*)*)\*/'
-        
-        def replace_comment(match):
-            comment_content = match.group(1)
-            placeholder = f"__COMMENT_{len(comments)}__"
-            comments.append(comment_content)
-            self.logger.debug(f"Extracted comment #{len(comments)-1}: '{comment_content}' -> placeholder '{placeholder}'")
-            return placeholder
-        
-        processed_pattern = re.sub(comment_pattern, replace_comment, target_pattern)
-
-        self.logger.debug(f"Comment extraction complete: extracted {len(comments)} comments, result: '{processed_pattern}'")
-        return processed_pattern, comments
-    
-    def _restore_inline_comments(self, result: str, comments: List[str]) -> str:
-        self.logger.debug(f"Restoring {len(comments)} inline comments to: '{result}'")
-
-        for i, comment in enumerate(comments):
-            placeholder = f"__COMMENT_{i}__"
-            old_result = result
-            result = result.replace(placeholder, f"/*{comment}*/")
-            self.logger.debug(f"Restored comment #{i}: '{comment}', '{old_result}' -> '{result}'")
-        
-        self.logger.debug(f"Comment restoration complete: '{result}'")
-        return result
-    
-    def _match_pattern(self, signal_name: str, pattern: str) -> bool:
-        self.logger.debug(f"Matching pattern: signal='{signal_name}', pattern='{pattern}'")
-        if '*' in pattern:
-            escaped_pattern = re.escape(pattern).replace('\\*', '(.*)')
-            self.logger.debug(f"Using wildcard matching with escaped pattern: '{escaped_pattern}'")
-            match_result = bool(re.match(f'^{escaped_pattern}$', signal_name))
-        else:
-            self.logger.debug("Using exact string matching")
-            match_result = signal_name == pattern
-
-        self.logger.debug(f"Pattern match result: {match_result}")
-        return match_result
-    
-    def _execute_function_call(self, function_call: str, groups: tuple) -> str:
-        self.logger.debug(f"Executing function call: '{function_call}' with groups: {groups}")
-        try:
-            processed_call = function_call
-            for i, group in enumerate(groups):
-                old_call = processed_call
-                processed_call = processed_call.replace(f'*{i}', f'group_{i}')
-                if old_call != processed_call:
-                    self.logger.debug(f"Replaced '*{i}' with 'group_{i}': '{old_call}' -> '{processed_call}'")
-            
-            old_call = processed_call
-            processed_call = processed_call.replace('*', 'group_0')
-            if old_call != processed_call:
-                self.logger.debug(f"Replaced '*' with 'group_0': '{old_call}' -> '{processed_call}'")
-            
-            local_vars = {}
-            for i, group in enumerate(groups):
-                local_vars[f'group_{i}'] = group
-            
-            local_vars.update(self.safe_functions)
-            local_vars['str'] = str
-            
-            self.logger.debug(f"Evaluating processed call: '{processed_call}'")
-            result = eval(processed_call, {"__builtins__": {}}, local_vars)
-            result_str = str(result)
-
-            self.logger.debug(f"Function call executed successfully: '{function_call}' -> '{result_str}'")
-            return result_str
-        
-        except Exception as e:
-            fallback = groups[0] if groups else function_call
-            self.logger.warning(f"Function call execution failed: '{function_call}', error: {e}, using fallback: '{fallback}'")
-            return fallback
-    
-    def _generate_width_literal(self, port: PortInfo, value: str) -> str:        
-        width = port.width
-
-        if not width or width == 1:
-            return f"1'b{value}"
-        
-        w_int = width if isinstance(width, int) else (int(width) if isinstance(width, str) and width.isdigit() else None)
-
-        if w_int and w_int <= 8:
-            result = f"{w_int}'b{value * w_int}"
-            self.logger.debug(f"Port '{port.name}' width={w_int} <= 8, using bit string: '{result}'")
-            return result
-        
-        if w_int:
-            result = f"{{{w_int}{{1'b{value}}}}}"
-            self.logger.debug(f"Port '{port.name}' width={w_int} > 8, using replication: '{result}'")
-            return result
-        
-        w_str = str(width)
-        needs_paren = any(op in w_str for op in ['+', '-', '*', '/'])
-        result = f"{{({w_str}){{1'b{value}}}}}" if needs_paren else f"{{{w_str}{{1'b{value}}}}}"
-        self.logger.debug(f"Port '{port.name}' expression width='{w_str}', result: '{result}'")
-        return result
-    
-    def _should_generate_wire_for_port(self, port: PortInfo) -> bool:
-        if port.port_type == PortType.INTERFACE:
-            self.logger.debug(f"Port '{port.name}' is interface type "
-                            f"({port.interface_type}), no wire should be generated")
-            return False
-        return True
-    
-    def get_rules_summary(self) -> Dict[str, int]:
+    def get_rules_summary(self) -> dict[str, int]:
         return {
             'signal_rules': len(self.rules['signal_rules']),
             'param_rules': len(self.rules['param_rules']),
-            'wire_rules': len(self.rules['wire_rules'])
+            'wire_rules': len(self.rules['wire_rules']),
         }
+
+    def _signal_rule_matches(self, rule: SignalRule, port: PortInfo) -> bool:
+        if rule.port_direction and not self._check_port_direction_match(
+            port, rule.port_direction
+        ):
+            return False
+        return self._match_pattern(port.name, rule.source)
+
+    def _check_port_direction_match(
+        self,
+        port: PortInfo,
+        required_direction: str,
+    ) -> bool:
+        if port.direction is None:
+            return True
+        return port.direction.lower() == required_direction
+
+    def _resolve_wire_expression(
+        self,
+        rule: WireRule,
+        port_name: str,
+    ) -> Optional[str]:
+        if rule.expression is None:
+            return None
+        return self._apply_pattern_substitution(
+            port_name, rule.port_pattern, rule.expression
+        )
+
+    def _handle_literal_value_if_needed(self, value: str, port: PortInfo) -> str:
+        stripped_value = value.strip()
+        if stripped_value in {'0', '1'}:
+            return self._generate_width_literal(port, stripped_value)
+        return value
+
+    def _apply_pattern_substitution(
+        self,
+        input_name: str,
+        source_pattern: str,
+        target_pattern: str,
+    ) -> str:
+        if '*' not in source_pattern:
+            return target_pattern
+
+        groups = self._match_groups(input_name, source_pattern)
+        if groups is None:
+            return target_pattern
+
+        result = FUNCTION_PATTERN.sub(
+            lambda match: self._execute_function_call(match.group(1), groups),
+            target_pattern,
+        )
+        for group in groups:
+            result = result.replace('*', group, 1)
+        return result
+
+    def _match_pattern(self, signal_name: str, pattern: str) -> bool:
+        return self._match_groups(signal_name, pattern) is not None
+
+    def _match_groups(
+        self,
+        input_name: str,
+        source_pattern: str,
+    ) -> Optional[tuple[str, ...]]:
+        if '*' not in source_pattern:
+            return () if input_name == source_pattern else None
+
+        escaped_pattern = re.escape(source_pattern).replace(r'\*', '(.*)')
+        match = re.match(f'^{escaped_pattern}$', input_name)
+        return match.groups() if match else None
+
+    def _execute_function_call(
+        self,
+        function_call: str,
+        groups: tuple[str, ...],
+    ) -> str:
+        try:
+            return self._evaluate_function_expression(function_call, groups)
+        except (IndexError, TypeError, ValueError) as error:
+            fallback = groups[0] if groups else function_call
+            self.logger.warning(
+                "Function expression rejected: %r (%s); using fallback %r",
+                function_call, error, fallback
+            )
+            return fallback
+
+    def _evaluate_function_expression(
+        self,
+        expression: str,
+        groups: tuple[str, ...],
+    ) -> str:
+        expression = expression.strip()
+        direct_ref = self._try_resolve_group_ref(expression, groups)
+        if direct_ref is not None:
+            return direct_ref
+
+        match = FUNCTION_CALL_PATTERN.match(expression)
+        if not match:
+            raise ValueError(f"invalid function expression: {expression}")
+
+        function_name, args_text = match.groups()
+        args = [
+            self._resolve_function_arg(arg, groups)
+            for arg in self._split_function_args(args_text)
+        ]
+        return self._apply_safe_function(function_name, args)
+
+    def _split_function_args(self, args_text: str) -> list[str]:
+        args: list[str] = []
+        current: list[str] = []
+        quote: Optional[str] = None
+        escaped = False
+
+        for char in args_text:
+            if escaped:
+                current.append(char)
+                escaped = False
+            elif char == '\\' and quote:
+                current.append(char)
+                escaped = True
+            elif quote:
+                current.append(char)
+                if char == quote:
+                    quote = None
+            elif char in {'"', "'"}:
+                current.append(char)
+                quote = char
+            elif char == ',':
+                args.append(''.join(current).strip())
+                current = []
+            else:
+                current.append(char)
+
+        if quote:
+            raise ValueError("unterminated quoted argument")
+        args.append(''.join(current).strip())
+        return args if args != [''] else []
+
+    def _resolve_function_arg(
+        self,
+        arg: str,
+        groups: tuple[str, ...],
+    ) -> str:
+        direct_ref = self._try_resolve_group_ref(arg, groups)
+        if direct_ref is not None:
+            return direct_ref
+
+        if self._is_quoted_string(arg):
+            return self._parse_quoted_string(arg)
+
+        if '.' in arg or '(' in arg or ')' in arg:
+            raise ValueError(f"unsupported argument expression: {arg}")
+        return arg
+
+    def _try_resolve_group_ref(
+        self,
+        token: str,
+        groups: tuple[str, ...],
+    ) -> Optional[str]:
+        match = GROUP_REF_PATTERN.match(token.strip())
+        if not match:
+            return None
+
+        index_text = match.group(1)
+        index = int(index_text) if index_text else 0
+        return groups[index]
+
+    @staticmethod
+    def _is_quoted_string(value: str) -> bool:
+        return (
+            len(value) >= 2
+            and value[0] == value[-1]
+            and value[0] in {'"', "'"}
+        )
+
+    @staticmethod
+    def _parse_quoted_string(value: str) -> str:
+        try:
+            parsed = ast.literal_eval(value)
+        except (SyntaxError, ValueError) as error:
+            raise ValueError(f"invalid string literal: {value}") from error
+        if not isinstance(parsed, str):
+            raise ValueError(f"argument is not a string literal: {value}")
+        return parsed
+
+    def _apply_safe_function(self, name: str, args: list[str]) -> str:
+        if name == 'upper' and len(args) == 1:
+            return args[0].upper()
+        if name == 'lower' and len(args) == 1:
+            return args[0].lower()
+        if name == 'title' and len(args) == 1:
+            return args[0].title()
+        if name == 'capitalize' and len(args) == 1:
+            return args[0].capitalize()
+        if name == 'strip' and len(args) == 1:
+            return args[0].strip()
+        if name == 'lstrip' and len(args) == 1:
+            return args[0].lstrip()
+        if name == 'rstrip' and len(args) == 1:
+            return args[0].rstrip()
+        if name == 'replace' and len(args) == 3:
+            return args[0].replace(args[1], args[2])
+        raise ValueError(f"unsupported function or arity: {name}/{len(args)}")
+
+    def _extract_inline_comments(self, target_pattern: str) -> tuple[str, list[str]]:
+        comments: list[str] = []
+        comment_pattern = r'/\*([^*]*(?:\*(?!/)[^*]*)*)\*/'
+
+        def replace_comment(match: re.Match[str]) -> str:
+            placeholder = f"__COMMENT_{len(comments)}__"
+            comments.append(match.group(1))
+            return placeholder
+
+        processed_pattern = re.sub(comment_pattern, replace_comment, target_pattern)
+        return processed_pattern, comments
+
+    def _restore_inline_comments(
+        self,
+        result: str,
+        comments: tuple[str, ...],
+    ) -> str:
+        for index, comment in enumerate(comments):
+            result = result.replace(f"__COMMENT_{index}__", f"/*{comment}*/")
+        return result
+
+    def _generate_width_literal(self, port: PortInfo, value: str) -> str:
+        width = port.width
+        if not width or width == 1:
+            return f"1'b{value}"
+
+        width_int = self._width_as_int(width)
+        if width_int and width_int <= INLINE_BINARY_THRESHOLD:
+            return f"{width_int}'b{value * width_int}"
+
+        if width_int:
+            return f"{{{width_int}{{1'b{value}}}}}"
+
+        width_expr = str(width)
+        if any(op in width_expr for op in ['+', '-', '*', '/']):
+            return f"{{({width_expr}){{1'b{value}}}}}"
+        return f"{{{width_expr}{{1'b{value}}}}}"
+
+    @staticmethod
+    def _width_as_int(width) -> Optional[int]:
+        if isinstance(width, int):
+            return width
+        if isinstance(width, str) and width.isdigit():
+            return int(width)
+        return None
+
+    def _should_generate_wire_for_port(self, port: PortInfo) -> bool:
+        return self._port_type_value(port).lower() != 'interface'
+
+    @staticmethod
+    def _port_type_value(port: PortInfo) -> str:
+        port_type = getattr(port, 'port_type', '')
+        return str(getattr(port_type, 'value', port_type))

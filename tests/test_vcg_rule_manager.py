@@ -178,6 +178,20 @@ class TestVCGRuleManager:
         port = PortInfo(name="test")
         # 应回退到第一个捕获组
         assert self.manager.resolve_signal_connection(port) == "test"
+
+    def test_signal_function_rejects_attribute_access(self):
+        """测试函数表达式拒绝Python属性访问"""
+        self.manager.add_signal_rule("*", "${str.__class__.__mro__[1].__subclasses__()}")
+
+        port = PortInfo(name="test")
+        assert self.manager.resolve_signal_connection(port) == "test"
+
+    def test_signal_function_not_evaluated_without_source_wildcard(self):
+        """测试无通配符源模式保持旧行为：不执行函数表达式"""
+        self.manager.add_signal_rule("clk", "${upper(*)}")
+
+        port = PortInfo(name="clk")
+        assert self.manager.resolve_signal_connection(port) == "${upper(*)}"
     
     def test_signal_literal_zero_width_1(self):
         """测试字面值0，宽度为1"""
