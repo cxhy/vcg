@@ -43,6 +43,39 @@ class TestVerilogLexerBasic:
         assert tok.type == "MODULE"
 
 
+class TestTask10LexerDiagnostics:
+    """TASK-10: lexer diagnostics and current-subset unsupported tokens."""
+
+    def test_at_is_recognized_unsupported_not_invalid(self):
+        lexer = VerilogLexer()
+        lexer.input("@")
+
+        assert lexer.token() is None
+        diagnostic = lexer.get_diagnostics()[0]
+        assert diagnostic.kind == "recognized_unsupported"
+        assert diagnostic.spelling == "@"
+        assert "current parser subset" in diagnostic.message
+
+    def test_generate_keyword_is_recognized_unsupported(self):
+        lexer = VerilogLexer()
+        lexer.input("generate")
+
+        assert lexer.token() is None
+        diagnostic = lexer.get_diagnostics()[0]
+        assert diagnostic.code == "VLEX_UNSUPPORTED_KEYWORD"
+        assert diagnostic.kind == "recognized_unsupported"
+        assert diagnostic.spelling == "generate"
+
+    def test_unknown_control_character_is_invalid(self):
+        lexer = VerilogLexer()
+        lexer.input("\x01")
+
+        assert lexer.token() is None
+        diagnostic = lexer.get_diagnostics()[0]
+        assert diagnostic.kind == "invalid"
+        assert diagnostic.spelling == "\x01"
+
+
 class TestKeywords:
     """关键字测试（14个）"""
     
@@ -593,26 +626,24 @@ class TestErrorHandling:
         return lex
     
     def test_illegal_character(self, lexer, caplog):
-        """测试非法字符处理"""
-        import logging
+        """测试当前子集不支持字符的诊断记录"""
+        lexer.input("module @test;")
 
-        with caplog.at_level(logging.ERROR, logger='VCG.VerilogLexer'):
-            lexer.input("module @test;")
+        # 获取第一个token（module）
+        tok1 = lexer.token()
+        assert tok1 is not None
+        assert tok1.type == "MODULE"
 
-            # 获取第一个token（module）
-            tok1 = lexer.token()
-            assert tok1 is not None
-            assert tok1.type == "MODULE"
+        # @被诊断并消费以继续扫描，下一个是test
+        tok2 = lexer.token()
+        assert tok2 is not None
+        assert tok2.type == "ID"
+        assert tok2.value == "test"
 
-            # @应该被跳过，下一个是test
-            tok2 = lexer.token()
-            assert tok2 is not None
-            assert tok2.type == "ID"
-            assert tok2.value == "test"
-
-        # 检查错误日志
-        assert "Lexical error" in caplog.text
-        assert "Illegal character" in caplog.text
+        diagnostic = lexer.get_diagnostics()[0]
+        assert diagnostic.kind == "recognized_unsupported"
+        assert diagnostic.spelling == "@"
+        assert "current parser subset" in diagnostic.message
 
 
 class TestComplexExpressions:

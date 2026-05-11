@@ -102,10 +102,18 @@ The project defines four VCG role skills:
 Use `doc/` as the handoff surface between roles:
 
 - Task document: `doc/task_<NN>_<slug>.md`
+- Design document: `doc/design_<NN>_<slug>.md`
 - Delivery document: `doc/delivery_<NN>_<slug>.md`
 - Verification report: `doc/verification_<NN>_<slug>.md`
 - Verilog / AST check report: `doc/check_<NN>_<slug>.md`
 - Feedback document: `doc/feedback_<NN>_<slug>.md`
+- Progress JSON for multi-task waves: `doc/<wave>_tasks.json`
+
+When a multi-task wave uses a progress JSON file, that JSON is the machine
+readable status source. Every phase transition must update the related task
+entry with status, artifact paths, validation evidence, blockers if any, and a
+history record. Do not mark a task done until the required handoff documents and
+user final confirmation are recorded.
 
 Escalation direction:
 
@@ -145,22 +153,37 @@ For planned refactors, parser/AST/interface changes, security-sensitive fixes,
 or changes that affect more than one module, use this sequence:
 
 1. `vcg-architect`: inspect existing code and write `doc/task_<NN>_<slug>.md`.
-   The task document must define scope, interface constraints, compatibility
-   requirements, validation gates, and known risks. Do not modify `src/` or
-   `tests/` in this phase.
-2. User confirmation gate: wait for the user to approve the task document unless
-   the user explicitly says to execute without another checkpoint.
-3. `vcg-python-dev`: implement only the approved task scope. Write
+   The task document must list the required refactor function points, current
+   problems and evidence, scope boundaries, interface constraints,
+   compatibility requirements, validation gates, and known risks. Do not modify
+   `src/` or `tests/` in this phase.
+2. User architecture review gate: wait for the user to approve the task document
+   unless the user explicitly says to execute without another checkpoint.
+3. Design phase: after user approval, write `doc/design_<NN>_<slug>.md`. The
+   design document must map every architect-required function point to concrete
+   file changes, data structures, interfaces, error flows, compatibility
+   handling, and tests. This phase may be performed in the main session or by a
+   design agent if the user explicitly requests agent delegation. Do not modify
+   `src/` or `tests/` in this phase.
+4. Design review gate: wait for the user or architect to approve the design
+   document before implementation.
+5. `vcg-python-dev`: implement only the approved task and design scope. Write
    `doc/delivery_<NN>_<slug>.md` describing changed files, validation points,
    downstream impact, and any deviations from the task.
-4. `vcg-python-tester`: read the delivery document, add or update tests as
+6. `vcg-python-tester`: read the task, design, and delivery documents. Add or
+   update tests as
    needed, run focused validation before broader regression, and write
    `doc/verification_<NN>_<slug>.md`. If validation finds a product-code issue,
    write `doc/feedback_<NN>_<slug>.md` instead of silently folding fixes into the
    same phase.
-5. `vcg-verilog-checker`: use for changes that affect generated Verilog, parser
-   AST semantics, or downstream instance/wire output. Write
-   `doc/check_<NN>_<slug>.md`.
+7. `vcg-architect`: read verification results and confirm that the original
+   function points, design constraints, compatibility requirements, and progress
+   JSON are satisfied. For changes that affect generated Verilog, parser AST
+   semantics, or downstream instance/wire output, also run the
+   `vcg-verilog-checker` role and write `doc/check_<NN>_<slug>.md`.
+8. User final confirmation gate: present the delivery, verification, and check
+   result to the user. Only after user confirmation may the task be committed
+   and marked `done`.
 
 The main session may perform the phases sequentially, but it must announce the
 active role, read the previous phase's handoff document, and keep each phase's

@@ -1,0 +1,575 @@
+{
+  "schema_version": 1,
+  "name": "verilog_parser_component_refactor",
+  "status": "task_10_done",
+  "created_at": "2026-05-11",
+  "updated_at": "2026-05-12",
+  "progress_doc": "doc/parser_refactor_plan.md",
+  "scope": {
+    "included": [
+      "src/VerilogPreprocess.py",
+      "src/VerilogLexer.py",
+      "src/VerilogParser.py",
+      "src/VerilogAst.py",
+      "src/verilog.bnf",
+      "tests/test_VerilogPreprocess.py",
+      "tests/test_VerilogLexer.py",
+      "tests/test_VerilogParser.py",
+      "tests/test_VerilogAst.py"
+    ],
+    "excluded": [
+      "src/vcg_instance_manager.py",
+      "src/vcg_wires_manager.py",
+      "src/vcg_rule_manager.py",
+      "src/vcg_execution_engine.py",
+      "src/vcg_file_processor.py",
+      "src/vcg.py"
+    ]
+  },
+  "status_model": {
+    "allowed": [
+      "pending",
+      "pending_user_review",
+      "user_approved_architecture",
+      "design_in_progress",
+      "design_ready_for_review",
+      "design_approved",
+      "in_progress",
+      "delivered_for_verification",
+      "verified",
+      "checked",
+      "pending_user_final_confirmation",
+      "done",
+      "blocked",
+      "superseded"
+    ],
+    "done_requires": [
+      "task_doc",
+      "design_doc",
+      "delivery_doc",
+      "verification_doc",
+      "validation.results",
+      "completed_at",
+      "history"
+    ],
+    "grammar_or_ast_tasks_require_check_doc": true
+  },
+  "completed_prerequisites": [
+    {
+      "id": "TASK-09",
+      "title": "Refactor VerilogPreprocess data flow and declaration extraction",
+      "status": "verified",
+      "task_doc": "doc/task_09_refactor_verilog_preprocess.md",
+      "delivery_doc": "doc/delivery_09_refactor_verilog_preprocess.md",
+      "verification_doc": "doc/verification_09_refactor_verilog_preprocess.md",
+      "validation": {
+        "summary": "696 passed",
+        "commands": [
+          "uv run pytest tests/test_VerilogPreprocess.py::TestTask09PreprocessRefactorBehavior -q",
+          "uv run pytest tests/test_VerilogPreprocess.py tests/test_VerilogParser.py -q",
+          "uv run pytest tests/test_vcg_instance_manager.py tests/test_vcg_wires_manager.py -q",
+          "uv run pytest tests -q"
+        ]
+      }
+    }
+  ],
+  "tasks": [
+    {
+      "id": "TASK-10",
+      "title": "Parser diagnostic contract",
+      "status": "done",
+      "owner_role": "vcg-architect",
+      "role_flow": [
+        {
+          "role": "vcg-architect",
+          "artifact": "doc/task_10_parser_diagnostic_contract.md",
+          "status": "user_approved_architecture"
+        },
+        {
+          "role": "design",
+          "artifact": "doc/design_10_parser_diagnostic_contract.md",
+          "status": "design_approved"
+        },
+        {
+          "role": "vcg-python-dev",
+          "artifact": "doc/delivery_10_parser_diagnostic_contract.md",
+          "status": "delivered_for_verification"
+        },
+        {
+          "role": "vcg-python-tester",
+          "artifact": "doc/verification_10_parser_diagnostic_contract.md",
+          "status": "verified"
+        },
+        {
+          "role": "vcg-architect",
+          "artifact": "doc/check_10_parser_diagnostic_contract.md",
+          "status": "checked"
+        },
+        {
+          "role": "user",
+          "artifact": "final confirmation before commit and task closeout",
+          "status": "confirmed"
+        }
+      ],
+      "depends_on": [
+        "TASK-09"
+      ],
+      "priority": "P0",
+      "task_doc": "doc/task_10_parser_diagnostic_contract.md",
+      "design_doc": "doc/design_10_parser_diagnostic_contract.md",
+      "delivery_doc": "doc/delivery_10_parser_diagnostic_contract.md",
+      "verification_doc": "doc/verification_10_parser_diagnostic_contract.md",
+      "check_doc": "doc/check_10_parser_diagnostic_contract.md",
+      "feedback_doc": "",
+      "started_at": "2026-05-11",
+      "completed_at": "2026-05-12",
+      "changed_files": [
+        "src/VerilogDiagnostics.py",
+        "src/VerilogLexer.py",
+        "src/VerilogParser.py",
+        "src/verilog.bnf",
+        "tests/test_VerilogLexer.py",
+        "tests/test_VerilogParser.py",
+        "doc/delivery_10_parser_diagnostic_contract.md",
+        "doc/parser_refactor_tasks.json"
+      ],
+      "write_scope": [
+        "src/VerilogDiagnostics.py",
+        "src/VerilogLexer.py",
+        "src/VerilogParser.py",
+        "src/verilog.bnf",
+        "tests/test_VerilogLexer.py",
+        "tests/test_VerilogParser.py"
+      ],
+      "acceptance": [
+        "Tokens or keywords unsupported by the current parser subset, such as @, ., ::, always, and generate, are captured as recognized_unsupported diagnostics and cause parse failure without being described as permanently illegal Verilog.",
+        "Inputs that cannot form reliable tokens are captured as invalid diagnostics.",
+        "VerilogParser never returns an AST when parse_errors or lexer diagnostics exist.",
+        "EOF errors, trailing garbage, and incomplete modules raise VCGParseError.",
+        "parse_file continues to raise VCGFileError for file IO failures.",
+        "A future extension can move recognized_unsupported tokens into supported tokens without replacing the diagnostic model."
+      ],
+      "validation": {
+        "commands": [
+          "uv run pytest tests/test_VerilogLexer.py tests/test_VerilogParser.py -q",
+          "uv run pytest tests/test_VerilogPreprocess.py tests/test_VerilogParser.py -q"
+        ],
+        "results": [
+          {
+            "command": "uv run pytest tests/test_VerilogLexer.py::TestTask10LexerDiagnostics -q",
+            "result": "3 passed"
+          },
+          {
+            "command": "uv run pytest tests/test_VerilogParser.py::TestTask10ParserDiagnosticContract -q",
+            "result": "4 passed"
+          },
+          {
+            "command": "uv run pytest tests/test_VerilogLexer.py tests/test_VerilogParser.py -q",
+            "result": "245 passed"
+          },
+          {
+            "command": "uv run pytest tests/test_VerilogPreprocess.py tests/test_VerilogParser.py -q",
+            "result": "184 passed"
+          },
+          {
+            "command": "uv run pytest tests -q",
+            "result": "703 passed"
+          },
+          {
+            "command": "uv run pytest tests -q",
+            "result": "703 passed on 2026-05-12 final confirmation gate"
+          }
+        ]
+      },
+      "blockers": [],
+      "superseded_by": "",
+      "history": [
+        {
+          "at": "2026-05-11",
+          "role": "vcg-architect",
+          "action": "created",
+          "evidence": "doc/parser_refactor_plan.md"
+        },
+        {
+          "at": "2026-05-11",
+          "role": "vcg-architect",
+          "action": "created_architecture_task_doc",
+          "evidence": "doc/task_10_parser_diagnostic_contract.md"
+        },
+        {
+          "at": "2026-05-11",
+          "role": "user",
+          "action": "approved_architecture_task_start",
+          "evidence": "User said: 好的，开始执行TASK-10"
+        },
+        {
+          "at": "2026-05-11",
+          "role": "design",
+          "action": "created_design_doc",
+          "evidence": "doc/design_10_parser_diagnostic_contract.md"
+        },
+        {
+          "at": "2026-05-11",
+          "role": "user",
+          "action": "approved_design_for_implementation",
+          "evidence": "User said: 没问题，执行修改"
+        },
+        {
+          "at": "2026-05-11",
+          "role": "vcg-python-dev",
+          "action": "started_implementation",
+          "evidence": "TASK-10 dev phase"
+        },
+        {
+          "at": "2026-05-11",
+          "role": "vcg-python-dev",
+          "action": "delivered_for_verification",
+          "evidence": "doc/delivery_10_parser_diagnostic_contract.md"
+        },
+        {
+          "at": "2026-05-11",
+          "role": "vcg-python-tester",
+          "action": "verified",
+          "evidence": "doc/verification_10_parser_diagnostic_contract.md"
+        },
+        {
+          "at": "2026-05-11",
+          "role": "vcg-architect",
+          "action": "checked_pending_user_final_confirmation",
+          "evidence": "doc/check_10_parser_diagnostic_contract.md"
+        },
+        {
+          "at": "2026-05-12",
+          "role": "user",
+          "action": "final_confirmation",
+          "evidence": "User said: 没问题"
+        },
+        {
+          "at": "2026-05-12",
+          "role": "vcg-architect",
+          "action": "marked_done",
+          "evidence": "uv run pytest tests -q -> 703 passed"
+        }
+      ]
+    },
+    {
+      "id": "TASK-11",
+      "title": "Lexer token contract",
+      "status": "pending",
+      "owner_role": "vcg-python-dev",
+      "depends_on": [
+        "TASK-10"
+      ],
+      "priority": "P0",
+      "task_doc": "doc/task_11_lexer_token_contract.md",
+      "delivery_doc": "",
+      "verification_doc": "",
+      "check_doc": "",
+      "feedback_doc": "",
+      "started_at": "",
+      "completed_at": "",
+      "changed_files": [],
+      "write_scope": [
+        "src/VerilogTokens.py",
+        "src/VerilogLexer.py",
+        "src/verilog.bnf",
+        "tests/test_VerilogLexer.py"
+      ],
+      "acceptance": [
+        "Keywords are case-sensitive and exact lowercase only.",
+        "Based numbers support uppercase/lowercase base, optional signed marker, x/z/? digits, and underscores without partial tokenization.",
+        "String literal token values preserve source spelling needed by parser/AST.",
+        "System identifiers and macro references have explicit token strategies."
+      ],
+      "validation": {
+        "commands": [
+          "uv run pytest tests/test_VerilogLexer.py -q",
+          "uv run pytest tests/test_VerilogLexer.py tests/test_VerilogParser.py -q"
+        ],
+        "results": []
+      },
+      "blockers": [],
+      "superseded_by": "",
+      "history": [
+        {
+          "at": "2026-05-11",
+          "role": "vcg-architect",
+          "action": "created",
+          "evidence": "doc/parser_refactor_plan.md"
+        }
+      ]
+    },
+    {
+      "id": "TASK-12",
+      "title": "Parser declaration groups",
+      "status": "pending",
+      "owner_role": "vcg-python-dev",
+      "depends_on": [
+        "TASK-11"
+      ],
+      "priority": "P0",
+      "task_doc": "doc/task_12_parser_declaration_groups.md",
+      "delivery_doc": "",
+      "verification_doc": "",
+      "check_doc": "",
+      "feedback_doc": "",
+      "started_at": "",
+      "completed_at": "",
+      "changed_files": [],
+      "write_scope": [
+        "src/VerilogDeclarations.py",
+        "src/VerilogParser.py",
+        "src/VerilogAst.py",
+        "src/verilog.bnf",
+        "tests/test_VerilogParser.py",
+        "tests/test_VerilogAst.py"
+      ],
+      "acceptance": [
+        "ANSI port declaration groups propagate direction, net type, and range to every declarator.",
+        "Header parameter groups support parameter A=1, B=2 and localparam A=1, B=2.",
+        "Body parameter and localparam groups behave consistently with header groups.",
+        "Parser core actions use typed declaration group objects instead of ad hoc dicts."
+      ],
+      "validation": {
+        "commands": [
+          "uv run pytest tests/test_VerilogParser.py -q",
+          "uv run pytest tests/test_VerilogParser.py tests/test_VerilogAst.py -q"
+        ],
+        "results": []
+      },
+      "blockers": [],
+      "superseded_by": "",
+      "history": [
+        {
+          "at": "2026-05-11",
+          "role": "vcg-architect",
+          "action": "created",
+          "evidence": "doc/parser_refactor_plan.md"
+        }
+      ]
+    },
+    {
+      "id": "TASK-13",
+      "title": "Parser grammar cleanup",
+      "status": "pending",
+      "owner_role": "vcg-python-dev",
+      "depends_on": [
+        "TASK-12"
+      ],
+      "priority": "P1",
+      "task_doc": "doc/task_13_parser_grammar_cleanup.md",
+      "delivery_doc": "",
+      "verification_doc": "",
+      "check_doc": "",
+      "feedback_doc": "",
+      "started_at": "",
+      "completed_at": "",
+      "changed_files": [],
+      "write_scope": [
+        "src/VerilogParser.py",
+        "src/verilog.bnf",
+        "tests/test_VerilogParser.py"
+      ],
+      "acceptance": [
+        "Parser rejects non-declaration body items if they leak past preprocessing.",
+        "Rules that consume assign or instance without AST semantics are removed or isolated as explicit failures.",
+        "p_error recovery strategy is documented and cannot produce a successful AST after a syntax error."
+      ],
+      "validation": {
+        "commands": [
+          "uv run pytest tests/test_VerilogParser.py -q",
+          "uv run pytest tests/test_VerilogPreprocess.py tests/test_VerilogParser.py -q"
+        ],
+        "results": []
+      },
+      "blockers": [],
+      "superseded_by": "",
+      "history": [
+        {
+          "at": "2026-05-11",
+          "role": "vcg-architect",
+          "action": "created",
+          "evidence": "doc/parser_refactor_plan.md"
+        }
+      ]
+    },
+    {
+      "id": "TASK-14",
+      "title": "Parser-facing AST builder contract",
+      "status": "pending",
+      "owner_role": "vcg-python-dev",
+      "depends_on": [
+        "TASK-12"
+      ],
+      "priority": "P1",
+      "task_doc": "doc/task_14_parser_ast_builder_contract.md",
+      "delivery_doc": "",
+      "verification_doc": "",
+      "check_doc": "",
+      "feedback_doc": "",
+      "started_at": "",
+      "completed_at": "",
+      "changed_files": [],
+      "write_scope": [
+        "src/VerilogAst.py",
+        "src/VerilogDeclarations.py",
+        "src/VerilogParser.py",
+        "tests/test_VerilogAst.py",
+        "tests/test_VerilogParser.py"
+      ],
+      "acceptance": [
+        "Builder exposes typed parser-facing methods for port and parameter declaration groups.",
+        "Public compatibility methods remain available.",
+        "Unknown kwargs in compatibility methods are rejected or explicitly diagnosed instead of silently dropped.",
+        "PortInfo and ParameterInfo public query behavior remains compatible."
+      ],
+      "validation": {
+        "commands": [
+          "uv run pytest tests/test_VerilogAst.py tests/test_VerilogParser.py -q"
+        ],
+        "results": []
+      },
+      "blockers": [],
+      "superseded_by": "",
+      "history": [
+        {
+          "at": "2026-05-11",
+          "role": "vcg-architect",
+          "action": "created",
+          "evidence": "doc/parser_refactor_plan.md"
+        }
+      ]
+    },
+    {
+      "id": "TASK-15",
+      "title": "Expression and literal preservation",
+      "status": "pending",
+      "owner_role": "vcg-python-dev",
+      "depends_on": [
+        "TASK-11",
+        "TASK-12",
+        "TASK-14"
+      ],
+      "priority": "P1",
+      "task_doc": "doc/task_15_expression_literal_preservation.md",
+      "delivery_doc": "",
+      "verification_doc": "",
+      "check_doc": "",
+      "feedback_doc": "",
+      "started_at": "",
+      "completed_at": "",
+      "changed_files": [],
+      "write_scope": [
+        "src/VerilogLexer.py",
+        "src/VerilogParser.py",
+        "src/VerilogAst.py",
+        "src/verilog.bnf",
+        "tests/test_VerilogLexer.py",
+        "tests/test_VerilogParser.py",
+        "tests/test_VerilogAst.py"
+      ],
+      "acceptance": [
+        "String parameter defaults preserve quotes.",
+        "Based number spelling remains stable enough for downstream display and expression fallback.",
+        "Macro references and system functions in width expressions preserve source semantics.",
+        "Large integer width calculations do not lose precision through float conversion."
+      ],
+      "validation": {
+        "commands": [
+          "uv run pytest tests/test_VerilogLexer.py tests/test_VerilogParser.py tests/test_VerilogAst.py -q",
+          "uv run pytest tests/test_VerilogPreprocess.py tests/test_VerilogParser.py -q"
+        ],
+        "results": []
+      },
+      "blockers": [],
+      "superseded_by": "",
+      "history": [
+        {
+          "at": "2026-05-11",
+          "role": "vcg-architect",
+          "action": "created",
+          "evidence": "doc/parser_refactor_plan.md"
+        }
+      ]
+    },
+    {
+      "id": "TASK-16",
+      "title": "Parser component verification closure",
+      "status": "pending",
+      "owner_role": "vcg-python-tester",
+      "depends_on": [
+        "TASK-10",
+        "TASK-11",
+        "TASK-12",
+        "TASK-13",
+        "TASK-14",
+        "TASK-15"
+      ],
+      "priority": "P0",
+      "task_doc": "doc/task_16_parser_component_verification_closure.md",
+      "delivery_doc": "",
+      "verification_doc": "doc/verification_16_parser_component_refactor.md",
+      "check_doc": "doc/check_16_parser_component_refactor.md",
+      "feedback_doc": "",
+      "started_at": "",
+      "completed_at": "",
+      "changed_files": [],
+      "write_scope": [
+        "doc/parser_refactor_tasks.json",
+        "doc/verification_16_parser_component_refactor.md",
+        "doc/check_16_parser_component_refactor.md",
+        "PROJECT.md"
+      ],
+      "acceptance": [
+        "All active parser refactor tasks are done in this JSON file.",
+        "Focused parser component tests pass.",
+        "Full test suite passes.",
+        "BNF and parser grammar are confirmed synchronized.",
+        "Stable parser architecture conclusions are summarized in PROJECT.md."
+      ],
+      "validation": {
+        "commands": [
+          "uv run pytest tests/test_VerilogLexer.py tests/test_VerilogParser.py tests/test_VerilogAst.py tests/test_VerilogPreprocess.py -q",
+          "uv run pytest tests -q"
+        ],
+        "results": []
+      },
+      "blockers": [],
+      "superseded_by": "",
+      "history": [
+        {
+          "at": "2026-05-11",
+          "role": "vcg-architect",
+          "action": "created",
+          "evidence": "doc/parser_refactor_plan.md"
+        }
+      ]
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-05-11",
+      "role": "vcg-architect",
+      "action": "created_refactor_wave",
+      "evidence": "doc/parser_refactor_plan.md"
+    },
+    {
+      "at": "2026-05-11",
+      "role": "design",
+      "action": "task_10_design_ready_for_review",
+      "evidence": "doc/design_10_parser_diagnostic_contract.md"
+    },
+    {
+      "at": "2026-05-11",
+      "role": "vcg-architect",
+      "action": "task_10_pending_user_final_confirmation",
+      "evidence": "doc/check_10_parser_diagnostic_contract.md"
+    },
+    {
+      "at": "2026-05-12",
+      "role": "vcg-architect",
+      "action": "task_10_done",
+      "evidence": "uv run pytest tests -q -> 703 passed"
+    }
+  ]
+}

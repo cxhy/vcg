@@ -281,6 +281,26 @@ These are not part of the current supported subset:
 These may be added later, but they must not be mixed into the current grammar
 without explicit task scope and tests.
 
+Unsupported-token diagnostic contract:
+
+- Tokens and keywords in this section are recognized Verilog/SystemVerilog
+  constructs, but unsupported by the current parser subset.
+- If such a token reaches the lexer/parser input, the frontend must record an
+  error diagnostic with kind `recognized_unsupported`.
+- The diagnostic message must say the construct is unsupported in the current
+  parser subset. It must not say the construct is permanently illegal Verilog.
+- Future support moves the token from this section into the supported token
+  list plus grammar rules; the fail-loud diagnostic boundary remains unchanged.
+
+Invalid lexical input:
+
+- Inputs that cannot form a reliable token stream are `invalid` diagnostics.
+- Examples include unknown control characters, unterminated strings, malformed
+  escaped identifiers, and malformed numeric literals before TASK-11 expands
+  literal support.
+- Error diagnostics from either category must prevent `VerilogParser` from
+  returning an AST.
+
 
 ===============================================================================
 4. Grammar: Current Supported Subset

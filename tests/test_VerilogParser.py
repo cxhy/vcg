@@ -635,6 +635,46 @@ class TestVerilogParserErrorHandling:
         assert info2['name'] == 'm2'
 
 
+class TestTask10ParserDiagnosticContract:
+    """TASK-10: parser must fail loud on lexer/parser diagnostics."""
+
+    def test_unsupported_at_character_fails_without_partial_ast(self):
+        parser = VerilogParser()
+
+        with pytest.raises(VCGParseError) as exc_info:
+            parser.parse_string("module m(input a@); endmodule")
+
+        assert parser.get_module_info() is None
+        assert "@" in str(exc_info.value)
+        assert "current parser subset" in str(exc_info.value)
+
+    def test_unsupported_generate_keyword_fails_without_partial_ast(self):
+        parser = VerilogParser()
+
+        with pytest.raises(VCGParseError) as exc_info:
+            parser.parse_string("module m; generate endgenerate endmodule")
+
+        assert parser.get_module_info() is None
+        assert "generate" in str(exc_info.value)
+
+    def test_garbage_inside_module_declaration_fails(self):
+        parser = VerilogParser()
+
+        with pytest.raises(VCGParseError):
+            parser.parse_string("module m(input a) garbage; endmodule")
+
+        assert parser.get_module_info() is None
+
+    def test_parser_instance_does_not_reuse_previous_successful_ast_after_failure(self):
+        parser = VerilogParser()
+        parser.parse_string("module ok(input clk); endmodule")
+
+        with pytest.raises(VCGParseError):
+            parser.parse_string("module bad(input a@); endmodule")
+
+        assert parser.get_module_info() is None
+
+
 class TestVerilogParserMacros:
     """宏预处理测试 - P2优先级"""
     
