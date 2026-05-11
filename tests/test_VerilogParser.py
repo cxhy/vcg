@@ -580,14 +580,10 @@ class TestVerilogParserErrorHandling:
             os.unlink(temp_path)
 
     def test_f5_3_missing_endmodule(self):
-        """F5.3: 缺少 endmodule — PLY 在 EOF 处可能恢复，接受 AST 或 VCGParseError 皆可"""
+        """F5.3: 缺少 endmodule — 应抛 VCGParseError"""
         code = "module test(input clk);"
-        try:
-            ast = self.parser.parse_string(code)
-            # 恢复成功时必须返回真实 AST，不能是伪造的空模块
-            assert ast is not None
-        except VCGParseError:
-            pass  # 明确报错也是可接受行为
+        with pytest.raises(VCGParseError):
+            self.parser.parse_string(code)
 
     def test_f5_4_port_syntax_error(self):
         """F5.4: 端口声明语法错误 — 应抛 VCGParseError"""
@@ -675,6 +671,143 @@ class TestTask10ParserDiagnosticContract:
         assert parser.get_module_info() is None
 
 
+class TestTask17VerilogParserRefactor:
+    """TASK-17: parser declaration group behavior and fail-loud cleanup."""
+
+    def test_ansi_port_group_inherits_direction_and_range(self):
+        parser = VerilogParser()
+        ast = parser.parse_string("module m(input [7:0] a, b); endmodule")
+
+        ports = {port.name: port for port in ast.get_port_info()}
+        assert ports["a"].direction == "input"
+        assert ports["a"].range_string == "[7:0]"
+        assert ports["b"].direction == "input"
+        assert ports["b"].range_string == "[7:0]"
+
+    def test_ansi_port_group_inherits_reg_type(self):
+        parser = VerilogParser()
+        ast = parser.parse_string("module m(output reg q, r); endmodule")
+
+        ports = {port.name: port for port in ast.get_port_info()}
+        assert ports["q"].net_type == "reg"
+        assert ports["r"].net_type == "reg"
+
+    def test_ansi_port_explicit_group_after_continuation(self):
+        parser = VerilogParser()
+        ast = parser.parse_string("module m(input a, b, output c); endmodule")
+
+        ports = {port.name: port for port in ast.get_port_info()}
+        assert ports["a"].direction == "input"
+        assert ports["b"].direction == "input"
+        assert ports["c"].direction == "output"
+
+    def test_header_parameter_group_inherits_parameter_type(self):
+        parser = VerilogParser()
+        ast = parser.parse_string("module m #(parameter A=1, B=2); endmodule")
+
+        params = {param.name: param for param in ast.get_parameter_info()}
+        assert params["A"].param_type == "parameter"
+        assert params["B"].param_type == "parameter"
+
+    def test_header_localparam_group_inherits_parameter_type(self):
+        parser = VerilogParser()
+        ast = parser.parse_string("module m #(localparam A=1, B=2); endmodule")
+
+        params = {param.name: param for param in ast.get_parameter_info()}
+        assert params["A"].param_type == "localparam"
+        assert params["B"].param_type == "localparam"
+
+    def test_header_parameter_flat_elements_start_new_explicit_group(self):
+        parser = VerilogParser()
+        ast = parser.parse_string(
+            "module m #(parameter A=1, B=2, localparam C=3, D=4); endmodule"
+        )
+
+        params = {param.name: param for param in ast.get_parameter_info()}
+        assert params["A"].param_type == "parameter"
+        assert params["B"].param_type == "parameter"
+        assert params["C"].param_type == "localparam"
+        assert params["D"].param_type == "localparam"
+
+    def test_body_parameter_and_localparam_groups_are_consistent(self):
+        parser = VerilogParser()
+        ast = parser.parse_string(
+            "module m; parameter A=1, B=2; localparam C=3, D=4; endmodule"
+        )
+
+        params = {param.name: param for param in ast.get_parameter_info()}
+        assert params["A"].param_type == "parameter"
+        assert params["B"].param_type == "parameter"
+        assert params["C"].param_type == "localparam"
+        assert params["D"].param_type == "localparam"
+
+    def test_parser_rejects_assign_if_preprocess_leaks_it(self):
+        parser = VerilogParser()
+        with pytest.raises(VCGParseError):
+            parser.parse_string("module m(input a); assign x = a; endmodule")
+        assert parser.get_module_info() is None
+
+    def test_parser_rejects_positional_instance_if_preprocess_leaks_it(self):
+        parser = VerilogParser()
+        with pytest.raises(VCGParseError):
+            parser.parse_string("module m(input a); child u0(a); endmodule")
+        assert parser.get_module_info() is None
+
+    def test_parser_rejects_named_instance_if_preprocess_leaks_it(self):
+        parser = VerilogParser()
+        with pytest.raises(VCGParseError):
+            parser.parse_string("module m(input a); child u0 (.a(a)); endmodule")
+        assert parser.get_module_info() is None
+
+    def test_v95_port_names_and_body_declaration_still_work(self):
+        parser = VerilogParser()
+        ast = parser.parse_string("module m(a, b); input [3:0] a, b; endmodule")
+
+        ports = {port.name: port for port in ast.get_port_info()}
+        assert ports["a"].direction == "input"
+        assert ports["a"].range_string == "[3:0]"
+        assert ports["b"].direction == "input"
+        assert ports["b"].range_string == "[3:0]"
+
+    def test_error_parameter_value_does_not_leave_fallback_parameter(self):
+        parser = VerilogParser()
+        with pytest.raises(VCGParseError):
+            parser.parse_string("module m #(parameter P = {A,}); endmodule")
+
+        assert parser.get_module_info() is None
+        if parser.builder is not None:
+            assert "P" not in parser.builder._parameters
+
+    def test_error_bit_select_does_not_leave_question_fallback(self):
+        parser = VerilogParser()
+        with pytest.raises(VCGParseError):
+            parser.parse_string("module m #(parameter P = A[+]); endmodule")
+
+        assert parser.get_module_info() is None
+        if parser.builder is not None:
+            values = [param.default_value for param in parser.builder._parameters.values()]
+            assert "A[?]" not in values
+
+    def test_mixed_v95_v2001_body_declaration_last_update_wins(self):
+        parser = VerilogParser()
+        ast = parser.parse_string(
+            """
+            module m(
+                input wire clk,
+                a, b
+            );
+                input a;
+                output b;
+            endmodule
+            """
+        )
+
+        ports = {port.name: port for port in ast.get_port_info()}
+        assert ports["clk"].direction == "input"
+        assert ports["a"].direction == "input"
+        assert ports["b"].direction == "output"
+
+
 class TestVerilogParserMacros:
     """宏预处理测试 - P2优先级"""
     
@@ -715,7 +848,7 @@ class TestVerilogParserMacros:
         code = "module m #(parameter P = `UNDEFINED_MACRO); endmodule"
         result = parser.parse_string(code)
         # 按预处理器默认行为处理
-        assert result is None or isinstance(result, object)
+        assert result is not None
 
 
 class TestVerilogParserBoundaryConditions:
@@ -750,7 +883,7 @@ class TestVerilogParserBoundaryConditions:
         code = f"module m({ports}); endmodule"
         self.parser.parse_string(code)
         info = self.parser.get_module_info()
-        assert len(info['ports']) >= 40  # 允许部分解析失败
+        assert len(info['ports']) == 50
     
     def test_b4_many_parameters(self):
         """B4: 大量参数（简化版：50个参数）"""
@@ -758,7 +891,7 @@ class TestVerilogParserBoundaryConditions:
         code = f"module m #({params}); endmodule"
         self.parser.parse_string(code)
         info = self.parser.get_module_info()
-        assert len(info['parameters']) >= 40  # 允许部分解析失败
+        assert len(info['parameters']) == 50
     
     def test_b5_deeply_nested_expression(self):
         """B5: 深度嵌套表达式"""

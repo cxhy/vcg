@@ -28,8 +28,10 @@ contract is narrower:
 - Build AST data for parameters and ports only.
 
 The current frontend does not build AST nodes for full module behavior.
-Non-declaration body items may be skipped only when they do not affect module
-declaration extraction.
+The preprocessor may remove non-declaration body items before parser input when
+that is unambiguous. If `assign`, module instances, or other behavior syntax
+leaks into parser grammar input, parsing must fail loudly instead of silently
+discarding it.
 
 
 ===============================================================================
@@ -332,12 +334,24 @@ Notation:
 4.2 Header parameter declarations
 -------------------------------------------------------------------------------
 
-<opt_parameter_port_list> ::= HASH LPAREN <parameter_declaration_sequence> RPAREN
+<opt_parameter_port_list> ::= HASH LPAREN <parameter_header_list> RPAREN
                             | HASH LPAREN RPAREN
                             | <empty>
 
-<parameter_declaration_sequence> ::= <parameter_declaration_group>
-                                   | <parameter_declaration_sequence> COMMA <parameter_declaration_group>
+<parameter_header_list> ::= <parameter_header_first>
+                          | <parameter_header_list> COMMA <parameter_header_next>
+
+<parameter_header_first> ::=
+    <parameter_kind> <opt_data_type> <param_assignment>
+
+<parameter_header_next> ::=
+    <parameter_kind> <opt_data_type> <param_assignment>
+  | <param_assignment>
+
+Header parameter declarations are parsed as flat header elements. A parser
+helper coalesces continuation assignments without `parameter` or `localparam`
+into the preceding declaration group, so `parameter A=1, B=2` produces one
+`parameter` group containing both `A` and `B`.
 
 <parameter_declaration_group> ::= <parameter_kind> <opt_data_type> <param_assignment_list>
 
@@ -357,7 +371,7 @@ Notation:
 4.3 Port lists
 -------------------------------------------------------------------------------
 
-<opt_port_list> ::= LPAREN <ansi_port_declaration_list> RPAREN
+<opt_port_list> ::= LPAREN <ansi_port_header_list> RPAREN
                   | LPAREN <port_name_list> RPAREN
                   | LPAREN RPAREN
                   | <empty>
@@ -365,35 +379,32 @@ Notation:
 <port_name_list> ::= ID
                    | <port_name_list> COMMA ID
 
-<ansi_port_declaration_list> ::= <ansi_port_declaration_group>
-                               | <ansi_port_declaration_list> COMMA <ansi_port_declaration_group>
+<ansi_port_header_list> ::= <ansi_port_header_first>
+                          | <ansi_port_header_list> COMMA <ansi_port_header_next>
 
-<ansi_port_declaration_group> ::=
-    <port_direction> <opt_port_type> <port_declarator_list>
+<ansi_port_header_first> ::=
+    <port_direction> <opt_net_or_reg_type> <opt_packed_dimension> <port_declarator>
+
+<ansi_port_header_next> ::=
+    <port_direction> <opt_net_or_reg_type> <opt_packed_dimension> <port_declarator>
+  | <port_declarator>
+
+Header ANSI ports are parsed as flat header elements. A parser helper coalesces
+continuation declarators without a direction into the preceding declaration
+group, so `input [7:0] a, b` produces one input wire `[7:0]` group containing
+both `a` and `b`.
 
 <port_direction> ::= INPUT
                    | OUTPUT
                    | INOUT
 
-<opt_port_type> ::= <port_type>
-                  | <empty>
+<opt_net_or_reg_type> ::= WIRE
+                        | REG
+                        | LOGIC
+                        | <empty>
 
-<port_type> ::= <net_or_var_type> <packed_dimension_list_opt>
-              | <data_type> <packed_dimension_list_opt>
-
-<net_or_var_type> ::= WIRE
-                    | REG
-                    | LOGIC
-
-<data_type> ::= LOGIC
-
-<packed_dimension_list_opt> ::= <packed_dimension_list>
-                              | <empty>
-
-<packed_dimension_list> ::= <packed_dimension>
-                          | <packed_dimension_list> <packed_dimension>
-
-<packed_dimension> ::= LBRACKET <expression> COLON <expression> RBRACKET
+<opt_packed_dimension> ::= LBRACKET <expression> COLON <expression> RBRACKET
+                         | <empty>
 
 <port_declarator_list> ::= <port_declarator>
                          | <port_declarator_list> COMMA <port_declarator>
@@ -411,22 +422,22 @@ Notation:
 
 <module_item> ::= <body_port_declaration>
                 | <body_parameter_declaration>
-                | <ignored_body_item>
 
 <body_port_declaration> ::=
-    <port_direction> <opt_port_type> <port_declarator_list> SEMICOLON
+    <port_direction> <opt_net_or_reg_type> <opt_packed_dimension>
+    <port_declarator_list> SEMICOLON
 
 <body_parameter_declaration> ::=
     <parameter_kind> <opt_data_type> <param_assignment_list> SEMICOLON
 
-<ignored_body_item> ::= <unsupported_or_unmodeled_body_item>
-
 Rules:
 
-- `<ignored_body_item>` is not represented in `VerilogAst`.
-- The declaration collector may remove ignored body items before yacc parsing.
-- If an ignored body item makes declaration boundaries ambiguous, parsing must
-  fail instead of guessing.
+- `assign` and module instance syntax are not parser grammar members.
+- The declaration collector may remove non-declaration body items before yacc
+  parsing only when target module extraction and declaration boundaries remain
+  unambiguous.
+- If a non-declaration body item leaks into parser input, parsing must fail
+  instead of guessing or silently dropping it.
 
 
 -------------------------------------------------------------------------------
@@ -593,6 +604,9 @@ The following syntax is not supported in the current subset:
 - Preprocess, lexer, or parser diagnostics must prevent returning a successful
   AST.
 - VCG must fail loudly rather than generate Verilog from a known-dirty AST.
+- Parser error productions are synchronization-only. They must not create
+  fallback declarations or fallback expression spellings consumed by the AST
+  builder.
 
 
 <empty> ::= epsilon

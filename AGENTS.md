@@ -92,10 +92,11 @@ The project defines four VCG role skills:
 
 | VCG role | Codex execution |
 |----------|-----------------|
-| `vcg-architect` | Main session owns architecture, planning, task documents, and integration decisions. Use `explorer` only for bounded parallel codebase investigation. |
-| `vcg-python-dev` | Use `worker` for implementation tasks with a clear file ownership boundary. |
-| `vcg-python-tester` | Use `worker` for writing or updating tests, running validation, and producing verification reports. |
-| `vcg-verilog-checker` | Use `explorer` for read-only Verilog/AST investigation; use `worker` when writing check reports, tests, or scripts. |
+| `vcg-architect` | Main session owns architecture, planning, task documents, final integration decisions, and user gates. Do not push implementation context into the architect session. |
+| `vcg-design` | Use an independent `worker` or `default` subagent prompted as the design role. It reads the approved task document and writes `doc/design_<NN>_<slug>.md`; it does not modify `src/` or `tests/`. |
+| `vcg-python-dev` | Use an independent `worker` subagent for implementation tasks with a clear file ownership boundary. |
+| `vcg-python-tester` | Use an independent `worker` subagent for writing or updating tests, running validation, and producing verification reports. |
+| `vcg-verilog-checker` | Use an independent `explorer` for read-only Verilog/AST investigation; use an independent `worker` when writing check reports, tests, or scripts. |
 
 ## Document Protocol
 
@@ -136,18 +137,31 @@ Escalation direction:
 
 ## Dispatch Rules
 
-- Do not start Codex subagents unless the user explicitly asks for parallel agents, subagents, delegation, or multiple agents working at once.
-- Keep architecture and cross-module decisions in the main session unless the user explicitly requests delegation.
+- The user has given a standing instruction that future refactor work is
+  subagentized. For planned refactors, parser/AST/interface changes,
+  security-sensitive fixes, or changes that affect more than one module, use
+  real Codex subagents for design, development, testing, and checker phases.
+- Spawn each role phase as an independent subagent with `reasoning_effort` set
+  to `high`. The main session remains the architect/integrator and should keep
+  its context focused on architecture, handoff review, progress tracking, and
+  user gates.
+- Do not use subagents for unrelated tiny local fixes unless the user asks for
+  the full role workflow or the change meets the planned-refactor criteria.
+- Keep architecture and cross-module decisions in the main session unless the
+  user explicitly asks to delegate architecture itself.
 - When dispatching `worker` agents, assign disjoint file ownership and tell them not to revert unrelated work.
 - Use `explorer` agents only for concrete, read-only questions that can run in parallel without blocking the main path.
 - Continue using `doc/` as the handoff surface for task, delivery, verification, check, and feedback records.
 
 ## Role Handoff Discipline
 
-Codex may execute all VCG roles in the main session when the user has not
-explicitly requested subagents, but the roles must still be separated by
-document handoffs. Do not collapse architecture, implementation, and
-verification into one unstructured pass.
+For refactor work, Codex must execute downstream VCG roles through independent
+subagents so implementation, test, and checker context does not pollute the
+architect session. The main session may only perform a downstream role directly
+for small local fixes that meet the skip criteria below, or when the user
+explicitly overrides the subagent workflow for that task. Even with subagents,
+roles must be separated by document handoffs. Do not collapse architecture,
+design, implementation, and verification into one unstructured pass.
 
 For planned refactors, parser/AST/interface changes, security-sensitive fixes,
 or changes that affect more than one module, use this sequence:
@@ -159,36 +173,38 @@ or changes that affect more than one module, use this sequence:
    `src/` or `tests/` in this phase.
 2. User architecture review gate: wait for the user to approve the task document
    unless the user explicitly says to execute without another checkpoint.
-3. Design phase: after user approval, write `doc/design_<NN>_<slug>.md`. The
-   design document must map every architect-required function point to concrete
-   file changes, data structures, interfaces, error flows, compatibility
-   handling, and tests. This phase may be performed in the main session or by a
-   design agent if the user explicitly requests agent delegation. Do not modify
-   `src/` or `tests/` in this phase.
+3. `vcg-design`: after user approval, spawn an independent design subagent with
+   `reasoning_effort=high` to write `doc/design_<NN>_<slug>.md`. The design
+   document must map every architect-required function point to concrete file
+   changes, data structures, interfaces, error flows, compatibility handling,
+   and tests. Do not modify `src/` or `tests/` in this phase.
 4. Design review gate: wait for the user or architect to approve the design
    document before implementation.
-5. `vcg-python-dev`: implement only the approved task and design scope. Write
-   `doc/delivery_<NN>_<slug>.md` describing changed files, validation points,
-   downstream impact, and any deviations from the task.
-6. `vcg-python-tester`: read the task, design, and delivery documents. Add or
-   update tests as
-   needed, run focused validation before broader regression, and write
-   `doc/verification_<NN>_<slug>.md`. If validation finds a product-code issue,
-   write `doc/feedback_<NN>_<slug>.md` instead of silently folding fixes into the
-   same phase.
+5. `vcg-python-dev`: spawn an independent development subagent with
+   `reasoning_effort=high`. It implements only the approved task and design
+   scope. It must write `doc/delivery_<NN>_<slug>.md` describing changed files,
+   validation points, downstream impact, and any deviations from the task.
+6. `vcg-python-tester`: spawn an independent tester subagent with
+   `reasoning_effort=high`. It reads the task, design, and delivery documents,
+   adds or updates tests as needed, runs focused validation before broader
+   regression, and writes `doc/verification_<NN>_<slug>.md`. If validation finds
+   a product-code issue, write `doc/feedback_<NN>_<slug>.md` instead of silently
+   folding fixes into the same phase.
 7. `vcg-architect`: read verification results and confirm that the original
    function points, design constraints, compatibility requirements, and progress
    JSON are satisfied. For changes that affect generated Verilog, parser AST
-   semantics, or downstream instance/wire output, also run the
-   `vcg-verilog-checker` role and write `doc/check_<NN>_<slug>.md`.
+   semantics, or downstream instance/wire output, also spawn an independent
+   `vcg-verilog-checker` subagent with `reasoning_effort=high` and write
+   `doc/check_<NN>_<slug>.md`.
 8. User final confirmation gate: present the delivery, verification, and check
    result to the user. Only after user confirmation may the task be committed
    and marked `done`.
 
-The main session may perform the phases sequentially, but it must announce the
-active role, read the previous phase's handoff document, and keep each phase's
-edits within that role's responsibility. This prevents context pollution and
-keeps the audit trail reconstructable from `doc/`.
+The main session orchestrates the phases sequentially, announces the active
+role, reviews the previous phase's handoff document before dispatching the next
+subagent, and keeps each subagent's edits within that role's responsibility.
+This prevents context pollution and keeps the audit trail reconstructable from
+`doc/`.
 
 Small local fixes may skip the full task/delivery/verification chain only when
 all of these are true:

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "verilog_parser_component_refactor",
-  "status": "task_10_done",
+  "status": "task_17_done",
   "created_at": "2026-05-11",
   "updated_at": "2026-05-12",
   "progress_doc": "doc/parser_refactor_plan.md",
@@ -302,7 +302,7 @@
     {
       "id": "TASK-12",
       "title": "Parser declaration groups",
-      "status": "pending",
+      "status": "superseded",
       "owner_role": "vcg-python-dev",
       "depends_on": [
         "TASK-11"
@@ -338,20 +338,26 @@
         "results": []
       },
       "blockers": [],
-      "superseded_by": "",
+      "superseded_by": "TASK-17",
       "history": [
         {
           "at": "2026-05-11",
           "role": "vcg-architect",
           "action": "created",
           "evidence": "doc/parser_refactor_plan.md"
+        },
+        {
+          "at": "2026-05-12",
+          "role": "vcg-architect",
+          "action": "superseded",
+          "evidence": "TASK-17 merges parser declaration groups with parser grammar cleanup for a single VerilogParser refactor task"
         }
       ]
     },
     {
       "id": "TASK-13",
       "title": "Parser grammar cleanup",
-      "status": "pending",
+      "status": "superseded",
       "owner_role": "vcg-python-dev",
       "depends_on": [
         "TASK-12"
@@ -383,13 +389,19 @@
         "results": []
       },
       "blockers": [],
-      "superseded_by": "",
+      "superseded_by": "TASK-17",
       "history": [
         {
           "at": "2026-05-11",
           "role": "vcg-architect",
           "action": "created",
           "evidence": "doc/parser_refactor_plan.md"
+        },
+        {
+          "at": "2026-05-12",
+          "role": "vcg-architect",
+          "action": "superseded",
+          "evidence": "TASK-17 merges parser declaration groups with parser grammar cleanup for a single VerilogParser refactor task"
         }
       ]
     },
@@ -399,7 +411,7 @@
       "status": "pending",
       "owner_role": "vcg-python-dev",
       "depends_on": [
-        "TASK-12"
+        "TASK-17"
       ],
       "priority": "P1",
       "task_doc": "doc/task_14_parser_ast_builder_contract.md",
@@ -447,7 +459,7 @@
       "owner_role": "vcg-python-dev",
       "depends_on": [
         "TASK-11",
-        "TASK-12",
+        "TASK-17",
         "TASK-14"
       ],
       "priority": "P1",
@@ -493,6 +505,252 @@
       ]
     },
     {
+      "id": "TASK-17",
+      "title": "Refactor VerilogParser grammar and declaration flow",
+      "status": "done",
+      "owner_role": "vcg-architect",
+      "role_flow": [
+        {
+          "role": "vcg-architect",
+          "artifact": "doc/task_17_refactor_verilog_parser.md",
+          "status": "user_approved_architecture"
+        },
+        {
+          "role": "vcg-design",
+          "artifact": "doc/design_17_refactor_verilog_parser.md",
+          "status": "design_approved"
+        },
+        {
+          "role": "vcg-python-dev",
+          "artifact": "doc/delivery_17_refactor_verilog_parser.md",
+          "status": "delivered_for_verification"
+        },
+        {
+          "role": "vcg-python-tester",
+          "artifact": "doc/verification_17_refactor_verilog_parser.md",
+          "status": "verified"
+        },
+        {
+          "role": "vcg-verilog-checker",
+          "artifact": "doc/check_17_refactor_verilog_parser.md",
+          "status": "checked"
+        },
+        {
+          "role": "user",
+          "artifact": "remaining TASK-17 gates delegated to architect",
+          "status": "architect_confirmed"
+        }
+      ],
+      "depends_on": [
+        "TASK-10"
+      ],
+      "supersedes": [
+        "TASK-12",
+        "TASK-13"
+      ],
+      "priority": "P0",
+      "task_doc": "doc/task_17_refactor_verilog_parser.md",
+      "design_doc": "doc/design_17_refactor_verilog_parser.md",
+      "delivery_doc": "doc/delivery_17_refactor_verilog_parser.md",
+      "verification_doc": "doc/verification_17_refactor_verilog_parser.md",
+      "check_doc": "doc/check_17_refactor_verilog_parser.md",
+      "feedback_doc": "",
+      "started_at": "2026-05-12",
+      "completed_at": "2026-05-12",
+      "changed_files": [
+        "src/VerilogParser.py",
+        "src/VerilogDeclarations.py",
+        "src/verilog.bnf",
+        "tests/test_VerilogParser.py",
+        "doc/delivery_17_refactor_verilog_parser.md",
+        "doc/verification_17_refactor_verilog_parser.md",
+        "doc/check_17_refactor_verilog_parser.md",
+        "doc/parser_refactor_tasks.json"
+      ],
+      "write_scope": [
+        "src/VerilogParser.py",
+        "src/VerilogDeclarations.py",
+        "src/verilog.bnf",
+        "tests/test_VerilogParser.py"
+      ],
+      "acceptance": [
+        "ANSI port declaration groups propagate direction, net type, and range to every declarator.",
+        "Header parameter groups support parameter A=1, B=2 and localparam A=1, B=2.",
+        "Body parameter and localparam groups behave consistently with header groups.",
+        "Parser no longer consumes assign or module instance syntax without AST semantics.",
+        "Parser error productions do not write incomplete fallback declarations into the AST builder.",
+        "VerilogParser public parse_string, parse_file, get_module_info, and get_diagnostics APIs remain compatible.",
+        "src/VerilogParser.py remains under 800 lines and changed functions remain under 50 lines."
+      ],
+      "validation": {
+        "commands": [
+          "uv run pytest tests/test_VerilogParser.py::TestTask17VerilogParserRefactor -q",
+          "uv run pytest tests/test_VerilogParser.py -q",
+          "uv run pytest tests/test_VerilogPreprocess.py tests/test_VerilogParser.py -q",
+          "uv run pytest tests/test_VerilogLexer.py tests/test_VerilogParser.py -q",
+          "uv run pytest tests -q"
+        ],
+        "results": [
+          {
+            "command": "uv run pytest tests/test_VerilogParser.py::TestTask17VerilogParserRefactor -q",
+            "result": "14 passed in 1.11s"
+          },
+          {
+            "command": "uv run pytest tests/test_VerilogParser.py -q",
+            "result": "113 passed in 6.89s"
+          },
+          {
+            "command": "uv run pytest tests/test_VerilogPreprocess.py tests/test_VerilogParser.py -q",
+            "result": "198 passed in 6.95s"
+          },
+          {
+            "command": "uv run pytest tests/test_VerilogLexer.py tests/test_VerilogParser.py -q",
+            "result": "259 passed in 7.23s"
+          },
+          {
+            "command": "uv run pytest tests -q",
+            "result": "717 passed in 12.72s"
+          },
+          {
+            "command": "uv run python -c \"import ply.yacc as yacc; from src.VerilogParser import VerilogParser; p=VerilogParser(); yacc.yacc(module=p, debug=False, write_tables=False); print('PLY parser build completed')\"",
+            "result": "completed; no shift/reduce or reduce/reduce conflicts; expected unused ASSIGN token warning"
+          },
+          {
+            "command": "uv run pytest tests/test_VerilogParser.py::TestTask17VerilogParserRefactor -q",
+            "result": "14 passed in 1.12s during vcg-verilog-checker phase"
+          },
+          {
+            "command": "uv run python -c \"<TASK-17 AST smoke script>\"",
+            "result": "ANSI, header params, V95, mixed last-update AST checks passed; assign/positional/named instance leak inputs raised VCGParseError"
+          },
+        {
+          "command": "rg -n \"ignored_body_item|module_item_assignment|module_item_instance|ASSIGN|assign|instance|fallback|\\\\?\\\\}|\\\\[\\\\?\\\\]|parameter_header|ansi_port_header|error\" src/VerilogParser.py src/verilog.bnf",
+          "result": "BNF/parser sync reviewed; no ignored_body_item, module_item_assignment, or module_item_instance parser rule found"
+          },
+          {
+            "command": "uv run pytest tests/test_VerilogParser.py::TestTask17VerilogParserRefactor -q",
+            "result": "14 passed in 1.12s on 2026-05-12 final architect verification after whitespace cleanup"
+          },
+          {
+            "command": "uv run pytest tests/test_VerilogParser.py -q",
+            "result": "113 passed in 6.83s on 2026-05-12 final architect verification after whitespace cleanup"
+          },
+          {
+            "command": "uv run pytest tests/test_VerilogPreprocess.py tests/test_VerilogParser.py -q",
+            "result": "198 passed in 9.15s on 2026-05-12 final architect verification"
+          },
+          {
+            "command": "uv run pytest tests/test_VerilogLexer.py tests/test_VerilogParser.py -q",
+            "result": "259 passed in 9.56s on 2026-05-12 final architect verification"
+          },
+          {
+            "command": "uv run pytest tests -q",
+            "result": "717 passed in 12.78s on 2026-05-12 final architect verification after whitespace cleanup"
+          }
+      ]
+      },
+      "blockers": [],
+      "superseded_by": "",
+      "history": [
+        {
+          "at": "2026-05-12",
+          "role": "vcg-architect",
+          "action": "created_architecture_task_doc",
+          "evidence": "doc/task_17_refactor_verilog_parser.md"
+        },
+        {
+          "at": "2026-05-12",
+          "role": "vcg-architect",
+          "action": "pending_user_review",
+          "evidence": "architecture review gate before vcg-design subagent"
+        },
+        {
+          "at": "2026-05-12",
+          "role": "user",
+          "action": "approved_architecture_and_delegated_remaining_gates_to_architect",
+          "evidence": "User said: 没问题，继续执行，后续的规则确认直接由架构师确认，运行直到当前模块的重构任务完成"
+        },
+        {
+          "at": "2026-05-12",
+          "role": "vcg-architect",
+          "action": "design_in_progress",
+          "evidence": "dispatch vcg-design subagent with reasoning_effort=high"
+        },
+        {
+          "at": "2026-05-12",
+          "role": "vcg-design",
+          "action": "design_ready_for_review",
+          "evidence": "doc/design_17_refactor_verilog_parser.md"
+        },
+        {
+          "at": "2026-05-12",
+          "role": "vcg-architect",
+          "action": "design_revision_requested",
+          "evidence": "requested executable ANSI header comma disambiguation strategy"
+        },
+        {
+          "at": "2026-05-12",
+          "role": "vcg-design",
+          "action": "design_revised",
+          "evidence": "flat AnsiPortHeaderElement grammar plus coalescing helper"
+        },
+        {
+          "at": "2026-05-12",
+          "role": "vcg-architect",
+          "action": "design_approved",
+          "evidence": "doc/design_17_refactor_verilog_parser.md covers F17.1-F17.6 and resolves PLY comma ambiguity"
+        },
+        {
+          "at": "2026-05-12",
+          "role": "vcg-architect",
+          "action": "implementation_in_progress",
+          "evidence": "dispatch vcg-python-dev subagent with reasoning_effort=high"
+        },
+        {
+          "at": "2026-05-12",
+          "role": "vcg-python-dev",
+          "action": "delivered_for_verification",
+          "evidence": "doc/delivery_17_refactor_verilog_parser.md; uv run pytest tests -q -> 713 passed"
+        },
+        {
+          "at": "2026-05-12",
+          "role": "vcg-architect",
+          "action": "verification_in_progress",
+          "evidence": "dispatch vcg-python-tester subagent with reasoning_effort=high"
+        },
+        {
+          "at": "2026-05-12",
+          "role": "vcg-python-tester",
+          "action": "verified",
+          "evidence": "doc/verification_17_refactor_verilog_parser.md; uv run pytest tests -q -> 717 passed"
+        },
+        {
+          "at": "2026-05-12",
+          "role": "vcg-architect",
+          "action": "check_in_progress",
+          "evidence": "dispatch vcg-verilog-checker subagent with reasoning_effort=high"
+        },
+        {
+          "at": "2026-05-12",
+          "role": "vcg-verilog-checker",
+          "action": "checked",
+          "evidence": "doc/check_17_refactor_verilog_parser.md; focused pytest and AST smoke checks passed; no feedback doc written"
+        },
+        {
+          "at": "2026-05-12",
+          "role": "vcg-architect",
+          "action": "final_verification_passed",
+          "evidence": "uv run pytest tests -q -> 717 passed after whitespace cleanup"
+        },
+        {
+          "at": "2026-05-12",
+          "role": "vcg-architect",
+          "action": "marked_done",
+          "evidence": "TASK-17 function points, verification, check report, and final architect verification complete"
+        }
+      ]
+    },
+    {
       "id": "TASK-16",
       "title": "Parser component verification closure",
       "status": "pending",
@@ -500,8 +758,7 @@
       "depends_on": [
         "TASK-10",
         "TASK-11",
-        "TASK-12",
-        "TASK-13",
+        "TASK-17",
         "TASK-14",
         "TASK-15"
       ],
